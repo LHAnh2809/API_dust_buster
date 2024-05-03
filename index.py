@@ -528,11 +528,8 @@ async def login_user(form_data: dict, db: Session = Depends(get_database)):
 
     email = form_data["email"]
     password = form_data["password"]
-
     # Lấy thông tin người dùng từ cơ sở dữ liệu
     user = await get_users(db, email)
-
-
     # Kiểm tra thông tin đăng nhập
     if user is None or user["email"] != email:
         raise HTTPException(
@@ -540,7 +537,6 @@ async def login_user(form_data: dict, db: Session = Depends(get_database)):
             detail=-1,
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
     #kiểm tra mật khẩu
     if user is None or user["password"] != password:
         raise HTTPException(
@@ -548,15 +544,12 @@ async def login_user(form_data: dict, db: Session = Depends(get_database)):
             detail=-2,
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
     if user is None or user["ban"] != 0:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=-3,
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
     # Tạo JWT token
     token_data = {"sub": user["email"], "id": user["id"]}
     token = create_jwt_token(token_data)
