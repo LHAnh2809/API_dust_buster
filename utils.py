@@ -51,8 +51,6 @@ def generate_referral_code(length=6):
 def get_weekday_string(working_day):
 
     today = datetime.now().date()
-    print(working_day)
-    print(today)
     if working_day.weekday() == 0:
         return "Thứ 2"
     elif working_day.weekday() == 1:

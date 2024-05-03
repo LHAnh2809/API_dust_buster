@@ -2184,13 +2184,13 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
 
     # Khởi tạo một từ điển để lưu trữ thông tin cho mỗi ngày
     days_dict = {
-        "Chủ Nhật": {"firstDay": None, "Day": "Chủ Nhật", "jobSalary": 0, "jobs": []},
         "Thứ 2": {"firstDay": None, "Day": "Thứ 2", "jobSalary": 0, "jobs": []},
         "Thứ 3": {"firstDay": None, "Day": "Thứ 3", "jobSalary": 0, "jobs": []},
         "Thứ 4": {"firstDay": None, "Day": "Thứ 4", "jobSalary": 0, "jobs": []},
         "Thứ 5": {"firstDay": None, "Day": "Thứ 5", "jobSalary": 0, "jobs": []},
         "Thứ 6": {"firstDay": None, "Day": "Thứ 6", "jobSalary": 0, "jobs": []},
-        "Thứ 7": {"firstDay": None, "Day": "Thứ 7", "jobSalary": 0, "jobs": []}
+        "Thứ 7": {"firstDay": None, "Day": "Thứ 7", "jobSalary": 0, "jobs": []},
+        "Chủ Nhật": {"firstDay": None, "Day": "Chủ Nhật", "jobSalary": 0, "jobs": []}
     }
 
     for item in filtered_data:
@@ -2226,11 +2226,21 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
     # Chuyển đổi từ danh sách từ điển thành danh sách
     for day_info in days_dict.values():
         day_info["firstDay"] = start_date.strftime("%d/%m")  # Gán giá trị cho trường "firstDay"
+        # Convert start_date to a string in the format "Y-m-d"
+        start_date_str = start_date.strftime("%Y-%m-%d")
+
+        # Convert start_date_str back to a datetime.date object
+        start_date_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+
+        # Get the weekday string
+        weekday_str = get_weekday_string(start_date_date)
+
+        day_info["Day"] = weekday_str
+
         result_json.append(day_info)
 
         # Di chuyển ngày khởi đầu sang ngày tiếp theo
         start_date += timedelta(days=1)
-
     return JSONResponse(content={"calendar": result_json, "status": "OK"},
                         media_type="application/json; charset=UTF-8")
 
