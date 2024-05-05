@@ -69,22 +69,15 @@ def get_weekday_string(working_day):
 
 def get_week_string(working_day):
     today = datetime.now().date()
-    if working_day.weekday() == 0:
-        return 0
-    elif working_day.weekday() == 1:
-        return 1
-    elif working_day.weekday() == 2:
-        return 2
-    elif working_day.weekday() == 3:
-        return 3
-    elif working_day.weekday() == 4:
-        return 4
-    elif working_day.weekday() == 5:
-        return 5
-    elif working_day.weekday() == 6:
-        return 6
-    else:
-        return "Không xác định"
+
+    # Tính số ngày chênh lệch giữa working_day và ngày hiện tại
+    delta_days = (today - working_day).days
+
+    # Lấy chỉ số của ngày trong tuần
+    day_index = (delta_days % 7)
+
+    # Trả về số thứ tự của ngày trong tuần
+    return day_index
 
 
 def get_date_range(start_date_str, end_date_str):

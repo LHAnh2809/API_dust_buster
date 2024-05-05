@@ -1,3 +1,4 @@
+
 from config.config import DATABASE_URL
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, status
 from sqlalchemy import create_engine, select, update, desc, text, func
@@ -5,7 +6,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from databases import Database
 from base.class_base import OTP, Base, Admin, Service, ServiceDuration, Users, Location, Promotion, Slides, Blog, \
     CustomerPromotions, Invoice, InvoiceDetails, AcceptJob, Notification, Partner, BalanceFluctuations, Evaluate, \
-    LoaiBoCV
+    LoaiBoCV, TinNhan
 from base.base_model import CreateLocation, ReferralCode, ForgotPassword, RequestEmail, OTPUserCreate, UsersCreate, \
     ServiceDurationUpdate, ServiceUpdateStatus, ServiceDurationCreate, ServiceAllUpdate, ServiceUpdate, Message, \
     ChangePassword, AdminAvatar, OTPCreate, OTPVerify, ResetPassword, AdminEmail, ServiceCreate, DeleteLoccation, \
@@ -20,8 +21,10 @@ from utils import get_db_location, generate_referral_code, convert_string, get_u
 from mail.otb_email import send_otp_email
 from mail.cskh_email import send_cskh_email
 import json
+from typing import List
 from starlette.responses import Response, JSONResponse
 from datetime import datetime, timedelta
+from fastapi import WebSocket, WebSocketDisconnect
 
 
 def get_database():
@@ -35,6 +38,8 @@ Base.metadata.create_all(bind=engine)
 # Tạo đối tượng SessionLocal để tương tác với cơ sở dữ liệu
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 app = FastAPI(root_path="/api/v1")
+
+websockets: List[WebSocket] = []
 
 #--------------------------------Admin-------------------------------------------------
 
@@ -1947,6 +1952,7 @@ async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = 
 
     user = await get_partner(db, current_user["sub"])
     result = extract_indexes(user['service'])
+    print(', '.join(map(str, result)))
     sql_query = f'''
       SELECT 
             id.id,
@@ -1985,6 +1991,12 @@ async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = 
             FROM accept_job
             WHERE id_partner = :id 
         )
+        AND NOT EXISTS (
+        SELECT 1
+        FROM loai_bo_cv
+        WHERE loai_bo_cv.id_invoice_details = id.id
+        AND loai_bo_cv.id_partner = :id
+    )
         ORDER BY 
         strftime('%Y-%m-%d %H:%M:%S', posting_time) DESC;
         '''
@@ -2198,7 +2210,7 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
         id.working_day,
         id.price,
         id.name_user,
-        id.phoneNumber,
+        id.phone_number,
         id.payment_methods
     FROM invoice_details id 
     LEFT JOIN invoice i ON id.id_invoice = i.id
@@ -2208,12 +2220,14 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
         '''
 
     today = datetime.now().date()  # Lấy ngày hiện tại
+    print(today)
     start_date = today
+    start_dates = today
 
     # Format lại ngày bắt đầu và kết thúc theo "DD/MM/YYYY"
     formatted_date_start = start_date.strftime("%Y-%m-%d")
 
-    end_date = today + timedelta(days=6)  # Tính ngày kết thúc
+    end_date = today + timedelta(days=6)
 
     # Format lại ngày kết thúc theo "DD/MM/YYYY"
     formatted_date_end = end_date.strftime("%Y-%m-%d")
@@ -2235,6 +2249,7 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
         "Chủ Nhật": {"firstDay": None, "Day": "Chủ Nhật", "jobSalary": 0, "jobs": []}
     }
     for day_info in days_dict.values():
+
         day_info["firstDay"] = start_date.strftime("%d/%m")  # Gán giá trị cho trường "firstDay"
         # Convert start_date to a string in the format "Y-m-d"
         start_date_str = start_date.strftime("%Y-%m-%d")
@@ -2252,8 +2267,7 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
         start_date += timedelta(days=1)
     for item in filtered_data:
         # Xác định ngày làm việc
-        start_date_str = start_date.strftime("%Y-%m-%d")
-
+        start_date_str = start_dates.strftime("%Y-%m-%d")
         # Convert start_date_str back to a datetime.date object
         start_date_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
         # Tạo một từ điển để lưu trữ thông tin của công việc
@@ -2274,7 +2288,7 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
             "name_user": item['name_user'],
             "payment_methods": item['payment_methods'],
             "workingDay": item['working_day'],
-            "phoneNumber": item['phoneNumber']
+            "phoneNumber": item['phone_number']
         }
         # Tăng số lượng công việc cho ngày đó
         result_json[get_week_string(start_date_date)]["jobSalary"] += 1
@@ -2354,3 +2368,55 @@ async def bo_cong_viec(idID:str,current_user: dict = Depends(verify_jwt_token), 
         ))
 
     return Message(detail=0)
+
+@app.post("/nhan-tin", response_model=Message)
+async def nhan_tin(idNG:str, idNN:str, content:str , db: Session = Depends(get_database)):
+
+    idTN = "TN-" + random_id()
+
+    idGN=""
+
+    idNH=""
+
+    print(idNG[0])
+
+    if idNG[0] == "K":
+        print("idNG starts with K")
+        idGN = idNG
+        idN = idNN
+    elif idNG[0] == "P":
+        print("idNG starts with P")
+        idGN = idNN
+        idNH = idNG
+    else:
+        print("idNG does not start with K or P")
+
+    current_datetime = datetime.now()
+    
+    async with db.transaction():
+
+        await db.execute(TinNhan.__table__.insert().values(
+            id_tin_nhan=idTN,
+            id_nguoi_gui=idGN,
+            id_nguoi_nhan=idNH,
+            noi_dung=content,
+            thoi_gian=current_datetime
+        ))
+
+    return Message(detail=0)
+
+async def send_message_to_websockets(receiver_id: str, message: str):
+    for websocket in websockets:
+        if websocket.path_params.get("user_id") == receiver_id:
+            await websocket.send_text(message)
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, current_user: dict = Depends(get_database)):
+    await websocket.accept()
+    websockets.append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        websockets.remove(websocket)
+

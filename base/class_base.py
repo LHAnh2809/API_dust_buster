@@ -271,10 +271,8 @@ class TinNhan(Base):
     __tablename__ = "tin_nhan"
 
     id_tin_nhan = Column(String, primary_key=True)
-    id_phong_chat = Column(String, nullable=False)
     id_nguoi_gui = Column(String, nullable=False)
     id_nguoi_nhan = Column(String, nullable=False)
-    id_tep_dinh_kem = Column(String, nullable=False)
     noi_dung = Column(String, nullable=False)
     thoi_gian = Column(String, nullable=False)
 
