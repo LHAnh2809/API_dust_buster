@@ -49,7 +49,6 @@ def generate_referral_code(length=6):
 
 
 def get_weekday_string(working_day):
-
     today = datetime.now().date()
     if working_day.weekday() == 0:
         return "Thứ 2"
@@ -65,6 +64,25 @@ def get_weekday_string(working_day):
         return "Thứ 7"
     elif working_day.weekday() == 6:
         return "Chủ Nhật"
+    else:
+        return "Không xác định"
+
+def get_week_string(working_day):
+    today = datetime.now().date()
+    if working_day.weekday() == 0:
+        return 0
+    elif working_day.weekday() == 1:
+        return 1
+    elif working_day.weekday() == 2:
+        return 2
+    elif working_day.weekday() == 3:
+        return 3
+    elif working_day.weekday() == 4:
+        return 4
+    elif working_day.weekday() == 5:
+        return 5
+    elif working_day.weekday() == 6:
+        return 6
     else:
         return "Không xác định"
 
@@ -135,6 +153,11 @@ async def get_users(db, email: str):
 
 async def get_partner(db, email: str):
     query = Partner.__table__.select().where(Partner.email == email)
+    user = await db.fetch_one(query)
+    return user
+
+async def get_partner_id(db, id: str):
+    query = Partner.__table__.select().where(Partner.id == id)
     user = await db.fetch_one(query)
     return user
 

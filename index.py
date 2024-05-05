@@ -4,18 +4,19 @@ from sqlalchemy import create_engine, select, update, desc, text, func
 from sqlalchemy.orm import sessionmaker, Session
 from databases import Database
 from base.class_base import OTP, Base, Admin, Service, ServiceDuration, Users, Location, Promotion, Slides, Blog, \
-    CustomerPromotions, Invoice, InvoiceDetails, AcceptJob, Notification, Partner, BalanceFluctuations
+    CustomerPromotions, Invoice, InvoiceDetails, AcceptJob, Notification, Partner, BalanceFluctuations, Evaluate, \
+    LoaiBoCV
 from base.base_model import CreateLocation, ReferralCode, ForgotPassword, RequestEmail, OTPUserCreate, UsersCreate, \
     ServiceDurationUpdate, ServiceUpdateStatus, ServiceDurationCreate, ServiceAllUpdate, ServiceUpdate, Message, \
     ChangePassword, AdminAvatar, OTPCreate, OTPVerify, ResetPassword, AdminEmail, ServiceCreate, DeleteLoccation, \
     UpdateLoccation, CreatePromotion, UpdatePromotion, CreateSlide, CreateBlog, UpdateBlog, DeleteSlides, UpdateSlide, \
     UpdateBlogStatus, SelectPromotionId, CustomerPromotionsCreate, GCoinUpdale, CreateInvoice, SelectJobDetails, \
-    CreatePartner, CreateWallet, CreateWalletU
+    CreatePartner, CreateWallet, CreateWalletU, CreateDanhGia
 from utils import get_db_location, generate_referral_code, convert_string, get_users, convert_date, \
     get_select_service_duration, get_select_service, delete_otp_after_delay, random_id, create_jwt_token, \
     verify_jwt_token, get_admin, oauth2_scheme, token_blacklist, get_delete_location, get_select_slides, \
     get_select_promotion, get_delete_slide, get_select_blog, current_date, get_select_promotion_id, get_db_user, \
-    get_partner, extract_indexes, get_weekday_string, get_partner_id
+    get_partner, extract_indexes, get_weekday_string, get_partner_id, get_week_string
 from mail.otb_email import send_otp_email
 from mail.cskh_email import send_cskh_email
 import json
@@ -520,7 +521,7 @@ async def update_slide(update_sl: UpdateSlide, db: Session = Depends(get_databas
 
 
 
-#-----------Users------------------
+#-----------Khách Hàng------------------
 
 # Đăng nhập người dùng
 @app.post("/login-user/")
@@ -710,6 +711,52 @@ async def check_customer_promotions(add_check_promotions: CustomerPromotionsCrea
         return Message(detail=0)
     return Message(detail=-1)
 
+@app.post("/post-danhgia/", response_model=Message)
+async def post_danhgia(add_danh_gia: CreateDanhGia, current_user: dict = Depends(verify_jwt_token),  db: Session = Depends(get_database)):
+    user = await get_users(db, current_user["sub"])
+
+    db_danhgia = CreateDanhGia(**add_danh_gia.dict())
+
+    id = "EV-" + random_id()
+
+    db_partner = await  get_partner_id(db, db_danhgia.idP)
+
+    current_datetime = datetime.now()
+
+    if(db_danhgia.sao == 1):
+        motSao = db_partner['one_star'] + 1
+        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(one_star=motSao)
+        await db.execute(update_queryy)
+    elif (db_danhgia.sao == 2):
+        haiSao = db_partner['two_star'] + 1
+        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(two_star=haiSao)
+        await db.execute(update_queryy)
+    elif (db_danhgia.sao == 3):
+        baSao = db_partner['three_star'] + 1
+        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(three_star=baSao)
+        await db.execute(update_queryy)
+    elif (db_danhgia.sao == 4):
+        bonSao = db_partner['four_star'] + 1
+        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(four_star=bonSao)
+        await db.execute(update_queryy)
+    elif (db_danhgia.sao == 5):
+        namSao = db_partner['five_star'] + 1
+        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(five_star=namSao)
+        await db.execute(update_queryy)
+
+
+    await db.execute(Evaluate.__table__.insert().values(
+        id=id,
+        id_partner=db_danhgia.idP,
+        id_user=user['id'],
+        star=db_danhgia.sao,
+        content=db_danhgia.note,
+        date=current_datetime
+    ))
+
+    update_queryy = update(InvoiceDetails).where(InvoiceDetails.id == db_danhgia.idID).values(order_status=6)
+    await db.execute(update_queryy)
+    return Message(detail=0)
 
 @app.get("/get-customer-promotions/", response_model=Message)
 async def get_customer_promotions(current_user: dict = Depends(verify_jwt_token),  db: Session = Depends(get_database)):
@@ -1038,18 +1085,7 @@ async def create_invoice(add_create_invoice: CreateInvoice, current_user: dict =
             id=idIV,
             label=db_invoice.label,
             id_users=user['id'],
-            name_user=db_invoice.nameUser,
-            phoneNumber=db_invoice.phoneNumber,
-            location=db_invoice.location,
-            location2=db_invoice.location2,
-            lat=db_invoice.lat,
-            lng=db_invoice.lng,
             repeat=db_invoice.repeat,
-            pet_notes=db_invoice.petNote,
-            employee_notes=db_invoice.employeeNote,
-            price=db_invoice.price,
-            pet_status=db_invoice.petStatus,
-            invoice_status=1,
             repeat_state=db_invoice.repeat_state
 
         ))
@@ -1058,10 +1094,18 @@ async def create_invoice(add_create_invoice: CreateInvoice, current_user: dict =
             id=idIVD,
             id_invoice=idIV,
             id_partner="",
+            name_user=db_invoice.nameUser,
+            phone_number=db_invoice.phoneNumber,
+            location=db_invoice.location,
+            location2=db_invoice.location2,
+            lat=db_invoice.lat,
+            lng=db_invoice.lng,
             posting_time=current_datetime,
             working_day=db_invoice.workingDay,
             work_time=db_invoice.workTime,
             room_area=db_invoice.roomArea,
+            pet_note=db_invoice.petNote,
+            employee_note=db_invoice.employeeNote,
             payment_methods=db_invoice.paymentMethods,
             price=db_invoice.price,
             order_status=1,
@@ -1079,7 +1123,7 @@ async def create_invoice(add_create_invoice: CreateInvoice, current_user: dict =
             status_notification=1,
         ))
 
-        if db_invoice.paymentMethods==2 :
+        if db_invoice.paymentMethods == 2 :
             await db.execute(BalanceFluctuations.__table__.insert().values(
                 id=idBF,
                 id_customer=user['id'],
@@ -1125,13 +1169,12 @@ async def get_pending_invoice(current_user: dict = Depends(verify_jwt_token), db
     id.work_time, 
     id.room_area,
     i.repeat, 
-    i.location, 
+    id.location, 
     id.price, 
     id.payment_methods,
     id.premium_service,
-    i.pet_notes, 
-    i.employee_notes, 
-    i.invoice_status,
+    id.pet_note, 
+    id.employee_note, 
     i.repeat_state,
     id.order_status,
     p.image AS imageP,
@@ -1148,7 +1191,6 @@ and id.order_status IN (1,2,3, 4)
 AND (aj.id IS NULL OR id.id_partner IS NULL OR pt.id IS NULL)
 ORDER BY 
     strftime('%Y-%m-%d %H:%M:%S', posting_time) DESC;
-
        '''
 
     # Execute the SQL query
@@ -1188,11 +1230,10 @@ ORDER BY
                 "location": item['location'],
                 "price": item['price'],
                 "roomArea": item['room_area'],
-                "petNotes": item['pet_notes'],
-                "employeeNotes": item['employee_notes'],
+                "petNotes": item['pet_note'],
+                "employeeNotes": item['employee_note'],
                 "premiumService": item['premium_service'],
                 "orderStatus": item['order_status'],
-                "invoiceStatus": item['invoice_status'],
                 "repeatState": item['repeat_state'],
                 "payment_methods": item['payment_methods'],
                 "oneStar": item['oneStarPT'],
@@ -1254,13 +1295,12 @@ async def get_history(current_user: dict = Depends(verify_jwt_token), db: Sessio
     id.work_time, 
     id.room_area,
     i.repeat, 
-    i.location, 
+    id.location, 
     id.price, 
     id.payment_methods,
     id.premium_service,
-    i.pet_notes, 
-    i.employee_notes, 
-    i.invoice_status,
+    id.pet_note, 
+    id.employee_note, 
     i.repeat_state,
     id.order_status,
     p.image AS imageP,
@@ -1273,7 +1313,7 @@ LEFT JOIN accept_job aj ON id.id = aj.id_invoice_details AND aj.status = 1
 LEFT JOIN partner p ON aj.id_partner = p.id
 LEFT JOIN partner pt ON pt.id = id.id_partner
 WHERE u.id = :user_id
-and id.order_status IN (0,5)
+and id.order_status IN (0,5,6)
 AND (aj.id IS NULL OR id.id_partner IS NULL OR pt.id IS NULL)
 ORDER BY 
     strftime('%Y-%m-%d %H:%M:%S', posting_time) DESC;
@@ -1317,11 +1357,10 @@ ORDER BY
                 "location": item['location'],
                 "price": item['price'],
                 "roomArea": item['room_area'],
-                "petNotes": item['pet_notes'],
-                "employeeNotes": item['employee_notes'],
+                "petNotes": item['pet_note'],
+                "employeeNotes": item['employee_note'],
                 "premiumService": item['premium_service'],
                 "orderStatus": item['order_status'],
-                "invoiceStatus": item['invoice_status'],
                 "repeatState": item['repeat_state'],
                 "payment_methods": item['payment_methods'],
                 "oneStar": item['oneStarPT'],
@@ -1377,7 +1416,9 @@ async def get_job_details(id: str, db: Session = Depends(get_database)):
             i.id AS idIV, 
             p.id AS idP,
             id.id_partner AS idPT,
+            u.id AS idU,
             u.name AS nameU,
+            u.image AS imageU,
             u.phoneNumber,
             i.label,
             pt.image AS imagePT,
@@ -1443,9 +1484,11 @@ async def get_job_details(id: str, db: Session = Depends(get_database)):
         result_item = {
             "idIV": item['idIV'],
             "idPT": item['idPT'],
+            "idU": item['idU'],
             "label": item['label'],
             "imagePT": item['imagePT'],
             "namePT": item['namePT'],
+            "imageU":item['imageU'],
             "phoneNumber": item['phoneNumber'],
             "nameU": item['nameU'],
             "postingTime": item['posting_time'],
@@ -1601,7 +1644,7 @@ async def get_partner_information(id: str, db: Session = Depends(get_database)):
         e.content,
         e.date
      from partner p 
-     left join evaluate e on p.id=e.id_parther 
+     left join evaluate e on p.id= e.id_partner 
      left join users u on e.id_user = u.id
     where p.id =:id
         '''
@@ -1907,14 +1950,14 @@ async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = 
     sql_query = f'''
       SELECT 
             id.id,
-            i.lat,
-            i.lng,
-            i.location,
-            i.location2,
+            id.lat,
+            id.lng,
+            id.location,
+            id.location2,
             i.label,
             id.work_time,
-            i.pet_notes,
-            i.employee_notes,
+            id.pet_note,
+            id.employee_note,
             id.room_area,
             id.premium_service,
             id.payment_methods,
@@ -1961,9 +2004,9 @@ async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = 
             "location": item['location'],
             "location2": item['location2'],
             "work_time": item['work_time'],
-            "pet_notes": item['pet_notes'],
+            "pet_notes": item['pet_note'],
             "label": item['label'],
-            "employee_notes": item['employee_notes'],
+            "employee_notes": item['employee_note'],
             "room_area": item['room_area'],
             "premium_service": item['premium_service'],
             "paymentMethods": item['payment_methods'],
@@ -2004,14 +2047,14 @@ async def get_wait_confirmation(current_user: dict = Depends(verify_jwt_token), 
       SELECT 
         id.id AS idID,
         aj.id AS idAJ,
-        i.lat,
-        i.lng,
-        i.location,
-        i.location2,
+        id.lat,
+        id.lng,
+        id.location,
+        id.location2,
         i.label,
         id.work_time,
-        i.pet_notes,
-        i.employee_notes,
+        id.pet_note,
+        id.employee_note,
         id.room_area,
         id.premium_service,
         id.order_status,
@@ -2051,9 +2094,9 @@ async def get_wait_confirmation(current_user: dict = Depends(verify_jwt_token), 
             "location": item['location'],
             "location2": item['location2'],
             "work_time": item['work_time'],
-            "pet_notes": item['pet_notes'],
+            "pet_notes": item['pet_note'],
             "label": item['label'],
-            "employee_notes": item['employee_notes'],
+            "employee_notes": item['employee_note'],
             "room_area": item['room_area'],
             "premium_service": item['premium_service'],
             "order_status": item['order_status'],
@@ -2082,14 +2125,14 @@ async def get_determined(current_user: dict = Depends(verify_jwt_token), db: Ses
     sql_query = f'''
       SELECT 
         id.id AS idID,
-        i.lat,
-        i.lng,
-        i.location,
-        i.location2,
+        id.lat,
+        id.lng,
+        id.location,
+        id.location2,
         i.label,
         id.work_time,
-        i.pet_notes,
-        i.employee_notes,
+        id.pet_note,
+        id.employee_note,
         id.room_area,
         id.premium_service,
         id.order_status,
@@ -2116,9 +2159,9 @@ async def get_determined(current_user: dict = Depends(verify_jwt_token), db: Ses
             "location": item['location'],
             "location2": item['location2'],
             "work_time": item['work_time'],
-            "pet_notes": item['pet_notes'],
+            "pet_notes": item['pet_note'],
             "label": item['label'],
-            "employee_notes": item['employee_notes'],
+            "employee_notes": item['employee_note'],
             "room_area": item['room_area'],
             "premium_service": item['premium_service'],
             "order_status": item['order_status'],
@@ -2138,43 +2181,42 @@ async def get_determined(current_user: dict = Depends(verify_jwt_token), db: Ses
 @app.get("/partner/get-calendar/")
 async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
     user = await get_partner(db, current_user["sub"])
-    print(user['id'])
     sql_query = f'''
       SELECT 
         id.id AS idID,
-        i.lat,
-        i.lng,
-        i.location,
-        i.location2,
+        id.lat,
+        id.lng,
+        id.location,
+        id.location2,
         i.label,
         id.work_time,
-        i.pet_notes,
-        i.employee_notes,
+        id.pet_note,
+        id.employee_note,
         id.room_area,
         id.premium_service,
         id.order_status,
         id.working_day,
         id.price,
-        i.name_user,
-        i.phoneNumber,
+        id.name_user,
+        id.phoneNumber,
         id.payment_methods
     FROM invoice_details id 
     LEFT JOIN invoice i ON id.id_invoice = i.id
     WHERE id.order_status IN (3, 4)
     and id.id_partner = :id
-    and substr(working_day, INSTR(working_day, ', ') + 2) >= :start_date
-    and substr(working_day, INSTR(working_day, ', ') + 2) <= :end_date
+    AND substr(substr(working_day, INSTR(working_day, ', ') + 2), 7) || '-' || substr(substr(working_day, INSTR(working_day, ', ') + 2), 4, 2) || '-' || substr(substr(working_day, INSTR(working_day, ', ') + 2), 1, 2) BETWEEN :start_date AND :end_date;
         '''
 
     today = datetime.now().date()  # Lấy ngày hiện tại
     start_date = today
 
     # Format lại ngày bắt đầu và kết thúc theo "DD/MM/YYYY"
-    formatted_date_start = start_date.strftime("%d/%m/%Y")
+    formatted_date_start = start_date.strftime("%Y-%m-%d")
+
     end_date = today + timedelta(days=6)  # Tính ngày kết thúc
 
     # Format lại ngày kết thúc theo "DD/MM/YYYY"
-    formatted_date_end = end_date.strftime("%d/%m/%Y")
+    formatted_date_end = end_date.strftime("%Y-%m-%d")
 
     # Thực thi truy vấn SQL
     filtered_data = await db.fetch_all(sql_query, values={"id": user['id'], "start_date": formatted_date_start, "end_date": formatted_date_end})
@@ -2192,12 +2234,28 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
         "Thứ 7": {"firstDay": None, "Day": "Thứ 7", "jobSalary": 0, "jobs": []},
         "Chủ Nhật": {"firstDay": None, "Day": "Chủ Nhật", "jobSalary": 0, "jobs": []}
     }
+    for day_info in days_dict.values():
+        day_info["firstDay"] = start_date.strftime("%d/%m")  # Gán giá trị cho trường "firstDay"
+        # Convert start_date to a string in the format "Y-m-d"
+        start_date_str = start_date.strftime("%Y-%m-%d")
 
+        # Convert start_date_str back to a datetime.date object
+        start_date_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        # Get the weekday string
+        weekday_str = get_weekday_string(start_date_date)
+
+        day_info["Day"] = weekday_str
+
+        result_json.append(day_info)
+
+        # Di chuyển ngày khởi đầu sang ngày tiếp theo
+        start_date += timedelta(days=1)
     for item in filtered_data:
         # Xác định ngày làm việc
-        working_day_str = item['working_day']
-        working_day = datetime.strptime(working_day_str.split(', ')[1], '%d/%m/%Y').date()
+        start_date_str = start_date.strftime("%Y-%m-%d")
 
+        # Convert start_date_str back to a datetime.date object
+        start_date_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
         # Tạo một từ điển để lưu trữ thông tin của công việc
         job_dict = {
             "idID": item['idID'],
@@ -2206,9 +2264,9 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
             "location": item['location'],
             "location2": item['location2'],
             "work_time": item['work_time'],
-            "pet_notes": item['pet_notes'],
+            "pet_notes": item['pet_note'],
             "label": item['label'],
-            "employee_notes": item['employee_notes'],
+            "employee_notes": item['employee_note'],
             "room_area": item['room_area'],
             "premium_service": item['premium_service'],
             "order_status": item['order_status'],
@@ -2219,28 +2277,12 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
             "phoneNumber": item['phoneNumber']
         }
         # Tăng số lượng công việc cho ngày đó
-        days_dict[get_weekday_string(working_day)]["jobSalary"] += 1
+        result_json[get_week_string(start_date_date)]["jobSalary"] += 1
         # Thêm thông tin công việc vào danh sách công việc của ngày đó
-        days_dict[get_weekday_string(working_day)]["jobs"].append(job_dict)
+        result_json[get_week_string(start_date_date)]["jobs"].append(job_dict)
 
     # Chuyển đổi từ danh sách từ điển thành danh sách
-    for day_info in days_dict.values():
-        day_info["firstDay"] = start_date.strftime("%d/%m")  # Gán giá trị cho trường "firstDay"
-        # Convert start_date to a string in the format "Y-m-d"
-        start_date_str = start_date.strftime("%Y-%m-%d")
 
-        # Convert start_date_str back to a datetime.date object
-        start_date_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-
-        # Get the weekday string
-        weekday_str = get_weekday_string(start_date_date)
-
-        day_info["Day"] = weekday_str
-
-        result_json.append(day_info)
-
-        # Di chuyển ngày khởi đầu sang ngày tiếp theo
-        start_date += timedelta(days=1)
     return JSONResponse(content={"calendar": result_json, "status": "OK"},
                         media_type="application/json; charset=UTF-8")
 
@@ -2249,3 +2291,66 @@ async def put_complete(id: str, db: Session = Depends(get_database)):
     update_queryy = update(InvoiceDetails).where(InvoiceDetails.id == id).values(order_status=4)
     await db.execute(update_queryy)
     return {"detail": "OK"}
+
+@app.get("/partner/get-3clean-wallet/")
+async def get_3clean_wallet(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+
+    user = await get_partner(db, current_user["sub"])
+    sql_query = f'''
+  select 
+bf.id, 
+p.money AS moneyP, 
+bf.money AS moneyBF, 
+bf.note, 
+bf.date, 
+bf.wallet,
+bf.status 
+from partner p
+left join balance_fluctuations bf on p.id= bf.id_customer 
+ where p.id =:id
+ORDER BY 
+        strftime('%Y-%m-%d %H:%M:%S', bf.date) DESC;
+               '''
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query,  values={"id": user["id"]})
+
+    result_json = {}
+    wallet=[]
+    if filtered_data:
+        item = filtered_data[0]
+        result_json = {
+            "moneyP": item['moneyP'],
+            'wallet':wallet,
+
+        }
+        for item in filtered_data:
+            if item['id'] is not None:
+                wallet.append({
+                    "id": item['id'],
+                    "moneyBF": item['moneyBF'],
+                    "note": item['note'],
+                    "date": item['date'],
+                    "wallet": item['wallet'],
+                    "status": item['status'],
+                })
+
+    return (JSONResponse(content={"3clean_wallet": result_json, "status": "OK"},
+                         media_type="application/json; charset=UTF-8"))
+
+@app.post("/partner/bo-cong-viec/", response_model=Message)
+async def bo_cong_viec(idID:str,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    user = await get_partner(db, current_user["sub"])
+
+    idLBCV = "LBCV-" + random_id()
+
+    print(idID)
+
+    async with db.transaction():
+        await db.execute(LoaiBoCV.__table__.insert().values(
+            id=idLBCV,
+            id_invoice_details=idID,
+            id_partner=user['id']
+        ))
+
+    return Message(detail=0)

@@ -182,7 +182,6 @@ class CreateInvoice(BaseModel):
     price: int
     gPoints: int
     paymentMethods: int
-    petStatus: int
     repeat_state: int
     premium_service: int
 
@@ -216,3 +215,9 @@ class CreateWalletU(BaseModel):
     status: int
     id: str
     idP: str
+
+class CreateDanhGia(BaseModel):
+    idP: str
+    idID: str
+    sao: int
+    note: str

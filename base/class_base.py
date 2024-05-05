@@ -141,18 +141,7 @@ class Invoice(Base):
     id = Column(String(), primary_key=True)
     label = Column(Integer, nullable=False)
     id_users = Column(String(), ForeignKey('users.id'), nullable=False)
-    name_user = Column(String(), nullable=False)
-    phoneNumber = Column(String(), nullable=False)
-    location = Column(String(), nullable=False)
-    location2 = Column(String(), nullable=False)
-    lat = Column(String(), nullable=False)
-    lng = Column(String(), nullable=False)
     repeat = Column(String())
-    pet_notes = Column(String())
-    employee_notes = Column(String())
-    price = Column(Integer, nullable=False)
-    pet_status = Column(Integer, nullable=False)
-    invoice_status = Column(Integer, nullable=False)
     repeat_state = Column(Integer, nullable=False)
 
 class InvoiceDetails(Base):
@@ -161,6 +150,14 @@ class InvoiceDetails(Base):
     id = Column(String(), primary_key=True)
     id_invoice = Column(String(), ForeignKey('invoice.id'), nullable=False)
     id_partner = Column(String())
+    name_user = Column(String(), nullable=False)
+    phone_number = Column(String(), nullable=False)
+    location = Column(String(), nullable=False)
+    location2 = Column(String(), nullable=False)
+    lat = Column(String(), nullable=False)
+    lng = Column(String(), nullable=False)
+    pet_note = Column(String())
+    employee_note = Column(String())
     posting_time = Column(String(), nullable=False)
     working_day = Column(String(), nullable=False)
     work_time = Column(String(), nullable=False)
@@ -170,6 +167,13 @@ class InvoiceDetails(Base):
     order_status = Column(Integer, nullable=False)
     premium_service=Column(Integer)
     cancel_job = Column(String)
+
+class LoaiBoCV(Base):
+    __tablename__ = "loai_bo_cv"
+
+    id = Column(String, primary_key=True)
+    id_invoice_details = Column(String, nullable=False)
+    id_partner = Column(String, nullable=False)
 
 class AcceptJob(Base):
     __tablename__ = "accept_job"
@@ -262,3 +266,35 @@ class Location(Base):
     lat = Column(String, nullable=False)
     lng = Column(String, nullable=False)
     defaultt = Column(Integer, nullable=False)
+
+class TinNhan(Base):
+    __tablename__ = "tin_nhan"
+
+    id_tin_nhan = Column(String, primary_key=True)
+    id_phong_chat = Column(String, nullable=False)
+    id_nguoi_gui = Column(String, nullable=False)
+    id_nguoi_nhan = Column(String, nullable=False)
+    id_tep_dinh_kem = Column(String, nullable=False)
+    noi_dung = Column(String, nullable=False)
+    thoi_gian = Column(String, nullable=False)
+
+class PhongChat(Base):
+    __tablename__ = "phong_chat"
+
+    id_phong_chat = Column(String, primary_key=True)
+    id_tin_nhan_cuoi_cung = Column(String, nullable=False)
+    thoi_gian = Column(String, nullable=False)
+
+class NguoiThamGiaChat(Base):
+    __tablename__ = "nguoi_tham_gia_chat"
+
+    id_nguo_giam_gia_tro_chuyen = Column(String, primary_key=True)
+    id_nguoi_tham_gia = Column(String, nullable=False)
+    id_phong_chat = Column(String, nullable=False)
+
+class TepDinhKem(Base):
+    __tablename__ = "tep_dinh_kem"
+
+    id_tep_dinh_kem = Column(String, primary_key=True)
+    kieu = Column(String, nullable=False)
+    tap_tep_dinh_kem_url = Column(String, nullable=False)
