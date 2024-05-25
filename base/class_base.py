@@ -142,7 +142,10 @@ class Invoice(Base):
     label = Column(Integer, nullable=False)
     id_users = Column(String(), ForeignKey('users.id'), nullable=False)
     repeat = Column(String())
+    duration = Column(String())
     repeat_state = Column(Integer, nullable=False)
+    cancel_repeat = Column(Integer, nullable=False)
+    removal_date = Column(String, nullable=False)
 
 class InvoiceDetails(Base):
     __tablename__ = "invoice_details"
@@ -165,8 +168,12 @@ class InvoiceDetails(Base):
     price = Column(Integer, nullable=False)
     payment_methods = Column(Integer, nullable=False)
     order_status = Column(Integer, nullable=False)
-    premium_service=Column(Integer)
+    premium_service = Column(Integer)
+    number_sessions = Column(String)
+    reason_cancellation = Column(String)
+    cancellation_time_completed = Column(String)
     cancel_job = Column(String)
+    cancellation_fee = Column(Integer)
 
 class LoaiBoCV(Base):
     __tablename__ = "loai_bo_cv"
@@ -270,29 +277,25 @@ class Location(Base):
 class TinNhan(Base):
     __tablename__ = "tin_nhan"
 
-    id_tin_nhan = Column(String, primary_key=True)
+    id = Column(String, primary_key=True)
     id_nguoi_gui = Column(String, nullable=False)
-    id_nguoi_nhan = Column(String, nullable=False)
+    id_phong_chat = Column(String, nullable=False)
     noi_dung = Column(String, nullable=False)
     thoi_gian = Column(String, nullable=False)
 
 class PhongChat(Base):
     __tablename__ = "phong_chat"
 
-    id_phong_chat = Column(String, primary_key=True)
-    id_tin_nhan_cuoi_cung = Column(String, nullable=False)
+    id = Column(String, primary_key=True)
+    tin_nhan_cuoi_cung = Column(String, nullable=False)
     thoi_gian = Column(String, nullable=False)
+    thoi_gian_tao_phong = Column(String, nullable=False)
 
-class NguoiThamGiaChat(Base):
-    __tablename__ = "nguoi_tham_gia_chat"
+class ThanhVienChat(Base):
+    __tablename__ = "thanh_vien_chat"
 
-    id_nguo_giam_gia_tro_chuyen = Column(String, primary_key=True)
-    id_nguoi_tham_gia = Column(String, nullable=False)
+    id = Column(String, primary_key=True)
+    id_user = Column(String, nullable=False)
     id_phong_chat = Column(String, nullable=False)
+    da_doc = Column(Integer, nullable=False)
 
-class TepDinhKem(Base):
-    __tablename__ = "tep_dinh_kem"
-
-    id_tep_dinh_kem = Column(String, primary_key=True)
-    kieu = Column(String, nullable=False)
-    tap_tep_dinh_kem_url = Column(String, nullable=False)

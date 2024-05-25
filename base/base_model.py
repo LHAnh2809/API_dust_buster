@@ -4,6 +4,10 @@ from pydantic import BaseModel
 class Message(BaseModel):
     detail: int
 
+class Messageid(BaseModel):
+    detail: int
+    id: str
+
 class ChangePassword(BaseModel):
     old_password: str
     new_password: str
@@ -184,6 +188,9 @@ class CreateInvoice(BaseModel):
     paymentMethods: int
     repeat_state: int
     premium_service: int
+    duration: str
+    number_sessions: str
+    removal_date: str
 
 class SelectJobDetails(BaseModel):
     id: str
@@ -221,3 +228,10 @@ class CreateDanhGia(BaseModel):
     idID: str
     sao: int
     note: str
+
+class Messages(BaseModel):
+    id_tin_nhan: str
+    id_nguoi_gui: str
+    id_nguoi_nhan: str
+    noi_dung: str
+    thoi_gian: str

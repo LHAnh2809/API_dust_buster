@@ -1,23 +1,25 @@
+from starlette.middleware.cors import CORSMiddleware
+from starlette.websockets import WebSocketState
 
 from config.config import DATABASE_URL
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, status
-from sqlalchemy import create_engine, select, update, desc, text, func
+from sqlalchemy import create_engine, select, update, desc, text, func, and_
 from sqlalchemy.orm import sessionmaker, Session
 from databases import Database
 from base.class_base import OTP, Base, Admin, Service, ServiceDuration, Users, Location, Promotion, Slides, Blog, \
     CustomerPromotions, Invoice, InvoiceDetails, AcceptJob, Notification, Partner, BalanceFluctuations, Evaluate, \
-    LoaiBoCV, TinNhan
+    LoaiBoCV, TinNhan, PhongChat, ThanhVienChat
 from base.base_model import CreateLocation, ReferralCode, ForgotPassword, RequestEmail, OTPUserCreate, UsersCreate, \
     ServiceDurationUpdate, ServiceUpdateStatus, ServiceDurationCreate, ServiceAllUpdate, ServiceUpdate, Message, \
     ChangePassword, AdminAvatar, OTPCreate, OTPVerify, ResetPassword, AdminEmail, ServiceCreate, DeleteLoccation, \
     UpdateLoccation, CreatePromotion, UpdatePromotion, CreateSlide, CreateBlog, UpdateBlog, DeleteSlides, UpdateSlide, \
     UpdateBlogStatus, SelectPromotionId, CustomerPromotionsCreate, GCoinUpdale, CreateInvoice, SelectJobDetails, \
-    CreatePartner, CreateWallet, CreateWalletU, CreateDanhGia
+    CreatePartner, CreateWallet, CreateWalletU, CreateDanhGia, Messageid
 from utils import get_db_location, generate_referral_code, convert_string, get_users, convert_date, \
     get_select_service_duration, get_select_service, delete_otp_after_delay, random_id, create_jwt_token, \
     verify_jwt_token, get_admin, oauth2_scheme, token_blacklist, get_delete_location, get_select_slides, \
     get_select_promotion, get_delete_slide, get_select_blog, current_date, get_select_promotion_id, get_db_user, \
-    get_partner, extract_indexes, get_weekday_string, get_partner_id, get_week_string
+    get_partner, extract_indexes, get_weekday_string, get_partner_id, get_week_string, get_db_partner
 from mail.otb_email import send_otp_email
 from mail.cskh_email import send_cskh_email
 import json
@@ -39,7 +41,14 @@ Base.metadata.create_all(bind=engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 app = FastAPI(root_path="/api/v1")
 
-websockets: List[WebSocket] = []
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Điều chỉnh lại để chỉ cho phép các nguồn cụ thể nếu cần
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+clients: List[WebSocket] = []
 
 #--------------------------------Admin-------------------------------------------------
 
@@ -579,6 +588,7 @@ async def get_user(current_user: dict = Depends(verify_jwt_token), db: Session =
     response_data = {"user": user, "status": "OK"}
 
     return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+
 # yêu cầu OTP
 @app.post("/request-otp-user/",response_model=Message)
 async def request_otp_user(otp_data: OTPUserCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_database)):
@@ -1091,8 +1101,10 @@ async def create_invoice(add_create_invoice: CreateInvoice, current_user: dict =
             label=db_invoice.label,
             id_users=user['id'],
             repeat=db_invoice.repeat,
-            repeat_state=db_invoice.repeat_state
-
+            repeat_state=db_invoice.repeat_state,
+            duration=db_invoice.duration,
+            cancel_repeat=0,
+            removal_date=db_invoice.removal_date
         ))
 
         await db.execute(InvoiceDetails.__table__.insert().values(
@@ -1115,7 +1127,12 @@ async def create_invoice(add_create_invoice: CreateInvoice, current_user: dict =
             price=db_invoice.price,
             order_status=1,
             cancel_job="",
-            premium_service=db_invoice.premium_service
+            reason_cancellation="",
+            cancellation_time_completed="",
+            cancellation_fee=0,
+            premium_service=db_invoice.premium_service,
+            number_sessions=db_invoice.number_sessions,
+
         ))
 
         await db.execute(Notification.__table__.insert().values(
@@ -1157,6 +1174,8 @@ async def get_pending_invoice(current_user: dict = Depends(verify_jwt_token), db
     u.name AS nameU,
     u.phoneNumber,
     i.label,
+    i.duration,
+    id.number_sessions,
     pt.image AS imagePT,
     pt.name AS namePT,
     pt.one_star AS oneStarPT,
@@ -1224,6 +1243,8 @@ ORDER BY
                 "idPT": item['idPT'],
                 "phonenumberPT": item['phonenumberPT'],
                 "label": item['label'],
+                "duration": item['duration'],
+                "number_sessions": item['number_sessions'],
                 "imagePT": item['imagePT'],
                 "namePT": item['namePT'],
                 "phoneNumber": item['phoneNumber'],
@@ -1268,7 +1289,139 @@ ORDER BY
 
     return JSONResponse(content={"pending_invoices": result_json, "status": "OK"},
                         media_type="application/json; charset=UTF-8")
+@app.get("/get-periodically/", response_model=Message)
+async def get_periodically(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
 
+    user = await get_users(db, current_user["sub"])
+
+    sql_query = '''
+          SELECT 
+    id.id AS idID, 
+    i.id AS idIV, 
+    p.id AS idP,
+    id.id_partner AS idPT,
+    u.name AS nameU,
+    u.phoneNumber,
+    i.label,
+    i.duration,
+    id.number_sessions,
+    pt.image AS imagePT,
+    pt.name AS namePT,
+    pt.one_star AS oneStarPT,
+    pt.two_star AS twoStarPT,
+    pt.three_star AS threeStarPT,
+    pt.four_star AS fourStarPT,
+    pt.five_star AS fiveStarPT,
+    p.one_star AS oneStarP,
+    p.two_star AS twoStarP,
+    p.three_star AS threeStarP,
+    p.four_star AS fourStarP,
+    p.five_star AS fiveStarP,
+    i.cancel_repeat,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    i.repeat, 
+    id.location, 
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note, 
+    i.repeat_state,
+    id.order_status,
+    p.image AS imageP,
+    p.name AS nameP,
+    pt.phonenumber AS phonenumberPT
+FROM users u 
+INNER JOIN invoice i ON u.id = i.id_users
+INNER JOIN invoice_details id ON i.id = id.id_invoice
+LEFT JOIN accept_job aj ON id.id = aj.id_invoice_details AND aj.status = 1
+LEFT JOIN partner p ON aj.id_partner = p.id
+LEFT JOIN partner pt ON pt.id = id.id_partner
+WHERE u.id = :user_id
+  AND id.order_status IN (0, 1, 2, 3, 4)
+  AND i.cancel_repeat = 0
+  AND i.duration != ""
+  AND (aj.id IS NULL OR id.id_partner IS NULL OR pt.id IS NULL)
+ORDER BY 
+    strftime('%Y-%m-%d %H:%M:%S', posting_time) DESC;
+       '''
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": user["id"]})
+
+    result_dict = {}
+
+    for item in filtered_data:
+        if item['idID'] not in result_dict:
+            partner_info = []
+            if item['idPT'] is not None:
+                partner_info.append({
+                    "idP": item['idP'],
+                    "imageP": item['imageP'],
+                    "nameP": item['nameP'],
+                    "oneStar": item['oneStarP'],
+                    "twoStar": item['twoStarP'],
+                    "threeStar": item['threeStarP'],
+                    "fourStar": item['fourStarP'],
+                    "fiveStar": item['fiveStarP']
+                })
+
+            result_dict[item['idID']] = {
+                "idID": item['idID'],
+                "idIV": item['idIV'],
+                "idPT": item['idPT'],
+                "phonenumberPT": item['phonenumberPT'],
+                "label": item['label'],
+                "duration": item['duration'],
+                "number_sessions": item['number_sessions'],
+                "cancelRepeat": item['cancel_repeat'],
+                "imagePT": item['imagePT'],
+                "namePT": item['namePT'],
+                "phoneNumber": item['phoneNumber'],
+                "nameU": item['nameU'],
+                "postingTime": item['posting_time'],
+                "workingDay": item['working_day'],
+                "workTime": item['work_time'],
+                "repeat": item['repeat'],
+                "location": item['location'],
+                "price": item['price'],
+                "roomArea": item['room_area'],
+                "petNotes": item['pet_note'],
+                "employeeNotes": item['employee_note'],
+                "premiumService": item['premium_service'],
+                "orderStatus": item['order_status'],
+                "repeatState": item['repeat_state'],
+                "payment_methods": item['payment_methods'],
+                "oneStar": item['oneStarPT'],
+                "twoStar": item['twoStarPT'],
+                "threeStar": item['threeStarPT'],
+                "fourStar": item['fourStarPT'],
+                "fiveStar": item['fiveStarPT'],
+                "partner": partner_info
+            }
+        else:
+            # Nếu idIV đã tồn tại trong từ điển, chỉ cập nhật thông tin partner (nếu có)
+            if item['idPT'] is not None:
+                partner_info = {
+                    "idP": item['idP'],
+                    "imageP": item['imageP'],
+                    "nameP": item['nameP'],
+                    "oneStar": item['oneStarP'],
+                    "twoStar": item['twoStarP'],
+                    "threeStar": item['threeStarP'],
+                    "fourStar": item['fourStarP'],
+                    "fiveStar": item['fiveStarP']
+                }
+                result_dict[item['idID']]['partner'].append(partner_info)
+
+    # Chuyển đổi từ điển thành danh sách để trả về
+    result_json = list(result_dict.values())
+
+    return JSONResponse(content={"periodic": result_json, "status": "OK"},
+                        media_type="application/json; charset=UTF-8")
 @app.get("/get-history/", response_model=Message)
 async def get_history(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
 
@@ -1283,6 +1436,7 @@ async def get_history(current_user: dict = Depends(verify_jwt_token), db: Sessio
     u.name AS nameU,
     u.phoneNumber,
     i.label,
+    i.duration,
     pt.image AS imagePT,
     pt.name AS namePT,
     pt.one_star AS oneStarPT,
@@ -1306,8 +1460,13 @@ async def get_history(current_user: dict = Depends(verify_jwt_token), db: Sessio
     id.premium_service,
     id.pet_note, 
     id.employee_note, 
+    id.cancel_job,
     i.repeat_state,
     id.order_status,
+    id.reason_cancellation,
+    id.cancellation_time_completed,
+    id.number_sessions,
+    id.cancellation_fee,
     p.image AS imageP,
     p.name AS nameP,
     pt.phonenumber AS phonenumberPT
@@ -1349,11 +1508,14 @@ ORDER BY
                 "idID": item['idID'],
                 "idIV": item['idIV'],
                 "idPT": item['idPT'],
+                "duration": item['duration'],
                 "phonenumberPT": item['phonenumberPT'],
                 "label": item['label'],
                 "imagePT": item['imagePT'],
                 "namePT": item['namePT'],
                 "phoneNumber": item['phoneNumber'],
+                "cancellationFee": item['cancellation_fee'],
+                "number_sessions": item['number_sessions'],
                 "nameU": item['nameU'],
                 "postingTime": item['posting_time'],
                 "workingDay": item['working_day'],
@@ -1372,6 +1534,9 @@ ORDER BY
                 "twoStar": item['twoStarPT'],
                 "threeStar": item['threeStarPT'],
                 "fourStar": item['fourStarPT'],
+                "cancelJob": item['cancel_job'],
+                "reasonCancellation": item['reason_cancellation'],
+                "cancellationTimeCompleted": item['cancellation_time_completed'],
                 "fiveStar": item['fiveStarPT'],
                 "partner": partner_info
             }
@@ -1412,6 +1577,124 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
 
     return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
 
+@app.get("/get-work-completed")
+async def get_work_completed(id: str, db: Database = Depends(get_database)):
+    sql_query = '''
+                SELECT 
+                    i.id AS invoice_id, 
+                    (
+                        SELECT COUNT(*) 
+                        FROM invoice_details id 
+                        WHERE id.id_invoice = :id AND id.order_status IN (5, 6)
+                    ) AS invoice_details_count
+                FROM 
+                    invoice i
+                WHERE 
+                    i.id = :id;
+               '''
+
+    # Execute the SQL query
+    result = await db.fetch_one(query=sql_query, values={"id": id})
+
+    # Get the count directly from the result
+    invoice_details_count = result["invoice_details_count"]
+
+    # Create a dictionary to return the response data
+    response_data = {"work-completed": invoice_details_count, "status": "OK"}
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+
+@app.post("/post-periodically-canneled/", response_model=Message)
+async def post_periodically_canneled(stt: int, idI: str, money: int, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+
+    print(idI)
+    user = await get_users(db, current_user["sub"])
+    idBF = "idBF" + random_id()
+    current_datetime = datetime.now()
+    if stt == 0:
+        moneys = user['money'] + money
+
+        async with db.transaction():
+            await db.execute(update(Users).where(Users.id == user['id']).values(money=moneys))
+            await db.execute(update(Invoice).where(Invoice.id == idI).values(cancel_repeat=1))
+            await db.execute(BalanceFluctuations.__table__.insert().values(
+                id=idBF,
+                id_customer=user['id'],
+                money=money,
+                note="Hoàn tiền dịch vụ",
+                date=current_datetime,
+                wallet="Từ hệ thống",
+                status=3
+            ))
+        return Message(detail=0)
+    else:
+        print("Chưa hoàn thành")
+
+    return Message(detail=0)
+@app.get("/partner/get-user/")
+async def get_user(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    # Lấy thông tin người dùng hiện tại
+    user = await get_partner(db, current_user["sub"])
+
+    rows = await get_db_partner(db, user['id'])
+
+    # Chuyển đổi các dòng thành danh sách từ điển
+
+    user = [dict(row) for row in rows]
+
+    # Tạo một từ điển chứa dữ liệu trả về
+    response_data = {"user": user, "status": "OK"}
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+@app.get("/partner/statistics/")
+async def get_statistics(id_partner: str, start_date: str, end_date: str, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    # Convert string input to datetime objects
+    try:
+        start_datetime = datetime.strptime(start_date, '%Y-%m-%d %H:%M:%S')
+        end_datetime = datetime.strptime(end_date, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD HH:MM:SS.")
+
+    sql_query = '''
+                SELECT 
+                    COUNT(*) AS vcdl,
+                    SUM(id.price) AS price,
+                    COUNT(CASE WHEN e.star > 2 THEN 1 ELSE NULL END) AS blt,
+                    COUNT(CASE WHEN e.star < 2 THEN 1 ELSE NULL END) AS blx
+                FROM 
+                    Partner p
+                INNER JOIN 
+                    Invoice_details id ON p.id = id.id_partner
+                INNER JOIN 
+                    evaluate e ON e.id_partner = p.id
+                WHERE 
+                    id.id_partner = :id_partner
+                    AND id.order_status = 6
+                    AND id.cancellation_time_completed BETWEEN :start_date AND :end_date
+                    AND e.date BETWEEN :start_date AND :end_date;
+               '''
+
+    # Execute the SQL query
+    result = await db.execute(text(sql_query), {
+        "id_partner": id_partner,
+        "start_date": start_datetime,
+        "end_date": end_datetime
+    })
+    row = result.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="No records found.")
+
+    # Create a dictionary to return the response data
+    response_data = {
+        "vcdl": row.vcdl,
+        "price": row.price,
+        "blt": row.blt,
+        "blx": row.blx,
+        "status": "OK"
+    }
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
 #get thông tin công viêệc chi tiết
 @app.get("/get-job-details/")
 async def get_job_details(id: str, db: Session = Depends(get_database)):
@@ -1647,6 +1930,7 @@ async def get_partner_information(id: str, db: Session = Depends(get_database)):
         p.four_star AS fourStarP,
         p.five_star AS fiveStarP,
         e.content,
+        e.star,
         e.date
      from partner p 
      left join evaluate e on p.id= e.id_partner 
@@ -1666,6 +1950,7 @@ async def get_partner_information(id: str, db: Session = Depends(get_database)):
                 "idE": item['idE'],
                 "nameU": item['nameU'],
                 "imageU": item['imageU'],
+                "star": item['star'],
                 "content": item['content'],
                 "date": item['date']
             })
@@ -1690,38 +1975,75 @@ async def get_partner_information(id: str, db: Session = Depends(get_database)):
                          media_type="application/json; charset=UTF-8"))
 
 @app.put("/put-cancel-job/")
-async def put_cancel_job(order_status: int, stt: int, price: int, idInvoiceDetails: str, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+async def put_cancel_job(idU: str,reason_cancellation: str, stt: int, price: int, idInvoiceDetails: str, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    current_datetime = datetime.now()
+    idBF = "idBF-" + random_id()
 
     if stt == 0:
         user = await get_users(db, current_user["sub"])
         moneys = price + int(user['money'])
-        update_queryy = update(InvoiceDetails).where(InvoiceDetails.id == idInvoiceDetails).values(cancel_job=user['id'])
-        update_query = update(Users).where(Users.id == id).values(money=moneys)
-        await db.execute(update_queryy)
-        await db.execute(update_query)
+        print(f"Updated money for user: {moneys}")
+
+        update_invoice_query = update(InvoiceDetails).where(InvoiceDetails.id == idInvoiceDetails).values(
+            order_status=0,
+            cancel_job=user['id'],
+            reason_cancellation=reason_cancellation,
+            cancellation_time_completed=current_datetime,
+            cancellation_fee=price
+        )
+
+        update_user_query = update(Users).where(Users.id == idU).values(money=moneys)
+
+        await db.execute(update_invoice_query)
+        await db.execute(update_user_query)
+        await db.execute(BalanceFluctuations.__table__.insert().values(
+            id=idBF,
+            id_customer=user['id'],
+            money=price,
+            note="Hoàn tiền dịch vụ",
+            date=current_datetime,
+            wallet="Từ hệ thống",
+            status=3
+        ))
     else:
         user = await get_partner(db, current_user["sub"])
-        moneys = price + int(user['money'])
-        update_queryy = update(InvoiceDetails).where(InvoiceDetails.id == idInvoiceDetails).values(cancel_job=user['id'])
-        update_query = update(Partner).where(Partner.id == id).values(money=moneys)
-        await db.execute(update_queryy)
-        await db.execute(update_query)
+        users = await get_db_user(db, idU)
+        moneys = price + int(users['money'])
+        print(f"Updated money for partner: {moneys}")
+
+        update_invoice_query = update(InvoiceDetails).where(InvoiceDetails.id == idInvoiceDetails).values(
+            order_status=0,
+            cancel_job=user['id'],
+            reason_cancellation=reason_cancellation,
+            cancellation_time_completed=current_datetime,
+            cancellation_fee=price
+        )
+
+        await db.execute(update_invoice_query)
+        await db.execute(BalanceFluctuations.__table__.insert().values(
+            id=idBF,
+            id_customer=users['id'],
+            money=price,
+            note="Hoàn tiền dịch vụ",
+            date=current_datetime,
+            wallet="Từ hệ thống",
+            status=3
+        ))
     return {"detail": "OK"}
 @app.put("/put-complete/")
 async def put_completee(add_create_partner: CreateWalletU,  db: Session = Depends(get_database)):
     current_datetime = datetime.now()
     idBF = "BF-" + random_id()
-    print(idBF)
     db_create_wallet = CreateWalletU(**add_create_partner.dict())
 
     user = await get_partner_id(db, db_create_wallet.idP)
 
     p = db_create_wallet.money + int(user['money'])
-
+    current_datetime = datetime.now()
     async with db.transaction():
-        await db.execute(update(InvoiceDetails).where(InvoiceDetails.id == db_create_wallet.id).values(order_status=5))
+        await db.execute(update(InvoiceDetails).where(InvoiceDetails.id == db_create_wallet.id).values(order_status=5, cancellation_time_completed=current_datetime))
 
-        await db.execute( update(Partner).where(Partner.id == db_create_wallet.idP).values(money=p))
+        await db.execute(update(Partner).where(Partner.id == db_create_wallet.idP).values(money=p))
 
         await db.execute(BalanceFluctuations.__table__.insert().values(
             id=idBF,
@@ -1833,120 +2155,6 @@ async def get_service(db: Session = Depends(get_database)):
 
     return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
 
-# # Hàm lấy thông tin chi tiết của đối tác
-# @app.get("/partner/get-partner-details/")
-# async def get_partner_details(id: str, db: Session = Depends(get_database)):
-#     sql_query = '''
-#             SELECT p.id AS idP,
-#                p.id_admin,
-#                id.id AS idID,
-#                bf.id AS idBf,
-#                ad.name AS nameAD,
-#                u.name AS nameU,
-#                p.email,
-#                p.phonenumber,
-#                p.password,
-#                p.name AS nameP,
-#                p.one_star,
-#                p.two_star,
-#                p.three_star,
-#                p.four_star,
-#                p.five_star,
-#                p.image,
-#                p.service,
-#                p.date_cccd,
-#                p.datebirth,
-#                p.cccd,
-#                p.address,
-#                p.sex,
-#                p.date,
-#                p.money,
-#                p.lat,
-#                p.lng,
-#                bf.status AS statusBF,
-#                bf.date AS dateBF,
-#                id.posting_time,
-#                id.working_day,
-#                id.work_time,
-#                id.room_area,
-#                id.price,
-#                id.order_status,
-#                id.cancel_job
-#         FROM partner p
-#         LEFT JOIN admin ad ON p.id_admin = ad.id
-#         LEFT JOIN balance_fluctuations bf ON p.id = bf.id_customer
-#         LEFT JOIN invoice_details id ON p.id = id.id_partner
-#         LEFT JOIN invoice i ON id.id_invoice = i.id
-#         LEFT JOIN users u ON i.id_users = u.id
-#         where
-#         p.id = :id
-#     '''
-#
-#     # Thực thi truy vấn SQL
-#     filtered_data = await db.fetch_all(sql_query, values={"id": id})
-#     balance_fluctuations_info = []
-#     invoice_details_info = []
-#
-#     # Tạo một danh sách trống để lưu chi tiết công việc
-#     result_item = {}
-#
-#     # Kiểm tra xem dữ liệu có tồn tại không
-#     if filtered_data:
-#         item = filtered_data[0]  # Lấy bản ghi đầu tiên
-#
-#         # Tạo thông tin về đối tác
-#         result_item = {
-#             "idP": item['idP'],
-#             "idAdmin": item['id_admin'],
-#             "email": item['email'],
-#             "phoneNumber": item['phonenumber'],
-#             "password": item['password'],
-#             "nameP": item['nameP'],
-#             "oneStar": item['one_star'],
-#             "twoStar": item['two_star'],
-#             "threeStar": item['three_star'],
-#             "fourStar": item['four_star'],
-#             "fiveStar": item['five_star'],
-#             "image": item['image'],
-#             "service": item['service'],
-#             "dateCccd": item['date_cccd'],
-#             "dateBirth": item['datebirth'],
-#             "cccd": item['cccd'],
-#             "address": item['address'],
-#             "sex": item['sex'],
-#             "date": item['date'],
-#             "money": item['money'],
-#             "lat": item['lat'],
-#             "lng": item['lng'],
-#             "balanceFluctuations": balance_fluctuations_info,
-#             "invoiceDetails": invoice_details_info
-#         }
-#
-#         # Lặp qua các bản ghi để lấy thông tin về biến động dư cân và chi tiết hóa đơn
-#         for item in filtered_data:
-#             if item['idBf'] is not None:
-#                 balance_fluctuations_info.append({
-#                     "idBf": item['idBf'],
-#                     "statusBF": item['statusBF'],
-#                     "dateBF": item['dateBF']
-#                 })
-#
-#             if item['idID'] is not None:
-#                 invoice_details_info.append({
-#                     "idID": item['idID'],
-#                     "nameU": item['nameU'],
-#                     "postingTime": item['posting_time'],
-#                     "workingDay": item['working_day'],
-#                     "workTime": item['work_time'],
-#                     "roomArea": item['room_area'],
-#                     "price": item['price'],
-#                     "orderStatus": item['order_status'],
-#                     "cancelJob": item['cancel_job'],
-#                 })
-#
-#     return JSONResponse(content={"partner_details": result_item, "status": "OK"},
-#                         media_type="application/json; charset=UTF-8")
-
 @app.get("/partner/get-job/")
 async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
 
@@ -1961,6 +2169,10 @@ async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = 
             id.location,
             id.location2,
             i.label,
+            i.repeat,
+            i.duration,
+            id.number_sessions,
+            i.repeat_state,
             id.work_time,
             id.pet_note,
             id.employee_note,
@@ -1989,7 +2201,7 @@ async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = 
         AND id.id NOT IN (
             SELECT id_invoice_details
             FROM accept_job
-            WHERE id_partner = :id 
+            WHERE id_partner = :id
         )
         AND NOT EXISTS (
         SELECT 1
@@ -2014,6 +2226,10 @@ async def get_job(current_user: dict = Depends(verify_jwt_token), db: Session = 
             "lat": item['lat'],
             "lng": item['lng'],
             "location": item['location'],
+            "repeatState": item['repeat_state'],
+            "numberSessions": item['number_sessions'],
+            "duration": item['duration'],
+            "repeat": item['repeat'],
             "location2": item['location2'],
             "work_time": item['work_time'],
             "pet_notes": item['pet_note'],
@@ -2057,22 +2273,26 @@ async def get_wait_confirmation(current_user: dict = Depends(verify_jwt_token), 
     user = await get_partner(db, current_user["sub"])
     sql_query = f'''
       SELECT 
-        id.id AS idID,
+        id.id,
         aj.id AS idAJ,
         id.lat,
         id.lng,
         id.location,
         id.location2,
         i.label,
+        i.repeat,
+        i.duration,
+        id.number_sessions,
+        i.repeat_state,
         id.work_time,
         id.pet_note,
         id.employee_note,
         id.room_area,
         id.premium_service,
+        id.payment_methods,
         id.order_status,
         id.working_day,
         id.price,
-        id.payment_methods,
         COALESCE(aj.accept_job_count, 0) AS accept_job_count
     FROM invoice_details id 
     LEFT JOIN invoice i ON id.id_invoice = i.id
@@ -2099,11 +2319,15 @@ async def get_wait_confirmation(current_user: dict = Depends(verify_jwt_token), 
     for item in filtered_data:
         # Check each field to ensure the value is not null before adding to result_json
         result_item = {
-            "idID": item['idID'],
+            "id": item['id'],
             "idAJ": item['idAJ'],
             "lat": item['lat'],
             "lng": item['lng'],
             "location": item['location'],
+            "repeatState": item['repeat_state'],
+            "numberSessions": item['number_sessions'],
+            "duration": item['duration'],
+            "repeat": item['repeat'],
             "location2": item['location2'],
             "work_time": item['work_time'],
             "pet_notes": item['pet_note'],
@@ -2111,10 +2335,10 @@ async def get_wait_confirmation(current_user: dict = Depends(verify_jwt_token), 
             "employee_notes": item['employee_note'],
             "room_area": item['room_area'],
             "premium_service": item['premium_service'],
+            "paymentMethods": item['payment_methods'],
             "order_status": item['order_status'],
             "workingDay": item['working_day'],
             "price": item['price'],
-            "payment_methods": item['payment_methods'],
             "accept_job_count": item['accept_job_count']
         }
 
@@ -2142,6 +2366,10 @@ async def get_determined(current_user: dict = Depends(verify_jwt_token), db: Ses
         id.location,
         id.location2,
         i.label,
+        i.repeat,
+        i.duration,
+        id.number_sessions,
+        i.repeat_state,
         id.work_time,
         id.pet_note,
         id.employee_note,
@@ -2173,6 +2401,10 @@ async def get_determined(current_user: dict = Depends(verify_jwt_token), db: Ses
             "work_time": item['work_time'],
             "pet_notes": item['pet_note'],
             "label": item['label'],
+            "repeatState": item['repeat_state'],
+            "numberSessions": item['number_sessions'],
+            "duration": item['duration'],
+            "repeat": item['repeat'],
             "employee_notes": item['employee_note'],
             "room_area": item['room_area'],
             "premium_service": item['premium_service'],
@@ -2196,6 +2428,7 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
     sql_query = f'''
       SELECT 
         id.id AS idID,
+        i.id_users AS idU,
         id.lat,
         id.lng,
         id.location,
@@ -2220,7 +2453,6 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
         '''
 
     today = datetime.now().date()  # Lấy ngày hiện tại
-    print(today)
     start_date = today
     start_dates = today
 
@@ -2267,12 +2499,23 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
         start_date += timedelta(days=1)
     for item in filtered_data:
         # Xác định ngày làm việc
-        start_date_str = start_dates.strftime("%Y-%m-%d")
-        # Convert start_date_str back to a datetime.date object
-        start_date_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        chuoi_ngay = item['working_day']
+
+        # Tách phần ngày và tháng từ chuỗi
+        ngay_va_thang_str = chuoi_ngay.split(", ")[1]
+
+        # Chuyển đổi chuỗi thành đối tượng datetime
+        ngay_va_thang_datetime = datetime.strptime(ngay_va_thang_str, "%d/%m/%Y")
+
+        # Chuyển đổi đối tượng datetime thành chuỗi với định dạng mong muốn
+        ngay_va_thang_format = ngay_va_thang_datetime.strftime("%Y-%m-%d")
+        start_date_date = datetime.strptime(ngay_va_thang_format, "%Y-%m-%d").date()
+        #print(start_date_date)
+        # Tạo một từ điển để lưu trữ thông tin của công việc
         # Tạo một từ điển để lưu trữ thông tin của công việc
         job_dict = {
             "idID": item['idID'],
+            "idU": item['idU'],
             "lat": item['lat'],
             "lng": item['lng'],
             "location": item['location'],
@@ -2290,6 +2533,7 @@ async def get_calendar(current_user: dict = Depends(verify_jwt_token), db: Sessi
             "workingDay": item['working_day'],
             "phoneNumber": item['phone_number']
         }
+        print(get_week_string(start_date_date))
         # Tăng số lượng công việc cho ngày đó
         result_json[get_week_string(start_date_date)]["jobSalary"] += 1
         # Thêm thông tin công việc vào danh sách công việc của ngày đó
@@ -2353,7 +2597,7 @@ ORDER BY
                          media_type="application/json; charset=UTF-8"))
 
 @app.post("/partner/bo-cong-viec/", response_model=Message)
-async def bo_cong_viec(idID:str,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+async def bo_cong_viec(idID:str, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
     user = await get_partner(db, current_user["sub"])
 
     idLBCV = "LBCV-" + random_id()
@@ -2368,55 +2612,330 @@ async def bo_cong_viec(idID:str,current_user: dict = Depends(verify_jwt_token), 
         ))
 
     return Message(detail=0)
+@app.get("/partner/lich-su-cong-viec/", response_model=Message)
+async def lich_su_cong_viec(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    user = await get_partner(db, current_user["sub"])
+    sql_query = f'''
+      SELECT 
+        id.location,
+        id.location2,
+        i.label,
+        id.work_time,
+        id.working_day,
+        id.cancel_job,
+        id.reason_cancellation,
+        id.cancellation_time_completed,
+        id.order_status
+    FROM invoice_details id
+    LEFT JOIN invoice i ON id.id_invoice = i.id
+    WHERE id.order_status IN (0, 5, 6)
+    and id.id_partner = :id
+    ORDER BY 
+            strftime('%Y-%m-%d %H:%M:%S', id.cancellation_time_completed) DESC;
+                   '''
 
-@app.post("/nhan-tin", response_model=Message)
-async def nhan_tin(idNG:str, idNN:str, content:str , db: Session = Depends(get_database)):
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"id": user["id"]})
 
-    idTN = "TN-" + random_id()
+    # Tạo một từ điển chứa dữ liệu trả về
+    result_json = []
 
-    idGN=""
+    for item in filtered_data:
+        titleHuy = "Khách hàng"
+        formatted_date_string="None"
+        if user['id'] == item['cancel_job']:
+            titleHuy = "Bạn"
+        original_date_string = item['cancellation_time_completed']
+        print(original_date_string)
+        if original_date_string is not None:
+            # Phân tích chuỗi thành đối tượng datetime
+            cleaned_date_string = original_date_string.split('.')[0]
 
-    idNH=""
+            # Phân tích chuỗi thành đối tượng datetime
+            original_datetime = datetime.strptime(cleaned_date_string, "%Y-%m-%d %H:%M:%S")
 
-    print(idNG[0])
+            # Định dạng lại đối tượng datetime theo định dạng mong muốn
+            formatted_date_string = original_datetime.strftime("%H:%M:%S %d/%m/%Y")
+        # Check each field to ensure the value is not null before adding to result_json
+        result_item = {
+            "location": item['location'],
+            "location2": item['location2'],
+            "work_time": item['work_time'],
+            "label": item['label'],
+            "workingDay": item['working_day'],
+            "cancelJob": titleHuy,
+            "reasonCancellation": item['reason_cancellation'],
+            "cancellationIimeCompleted": formatted_date_string,
+            "orderStatus": item['order_status']
+        }
 
-    if idNG[0] == "K":
-        print("idNG starts with K")
-        idGN = idNG
-        idN = idNN
-    elif idNG[0] == "P":
-        print("idNG starts with P")
-        idGN = idNN
-        idNH = idNG
-    else:
-        print("idNG does not start with K or P")
+        result_json.append(result_item)
 
-    current_datetime = datetime.now()
-    
-    async with db.transaction():
+    return (JSONResponse(content={"cancel_complete_history": result_json, "status": "OK"},
+                         media_type="application/json; charset=UTF-8"))
 
-        await db.execute(TinNhan.__table__.insert().values(
-            id_tin_nhan=idTN,
-            id_nguoi_gui=idGN,
-            id_nguoi_nhan=idNH,
-            noi_dung=content,
-            thoi_gian=current_datetime
-        ))
 
-    return Message(detail=0)
+@app.get("/partner/statistics")
+async def get_statistics(
+    start_date_1: str, end_date_1: str,
+    start_date_2: str, end_date_2: str,
+    current_user: dict = Depends(verify_jwt_token),
+    db: Session = Depends(get_database)
+):
+    user = await get_partner(db, current_user["sub"])
 
-async def send_message_to_websockets(receiver_id: str, message: str):
-    for websocket in websockets:
-        if websocket.path_params.get("user_id") == receiver_id:
-            await websocket.send_text(message)
+    # Convert string input to datetime objects
+    try:
+        start_datetime_1 = datetime.strptime(start_date_1, '%Y-%m-%d %H:%M:%S')
+        end_datetime_1 = datetime.strptime(end_date_1, '%Y-%m-%d %H:%M:%S')
+        start_datetime_2 = datetime.strptime(start_date_2, '%Y-%m-%d %H:%M:%S')
+        end_datetime_2 = datetime.strptime(end_date_2, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD HH:MM:SS.")
+
+    sql_query = '''
+                SELECT 
+                    COUNT(*) AS vcdl,
+                    SUM(id.price) AS price,
+                    COUNT(CASE WHEN e.star > 2 THEN 1 ELSE NULL END) AS blt,
+                    COUNT(CASE WHEN e.star < 2 THEN 1 ELSE NULL END) AS blx
+                FROM 
+                    Partner p
+                INNER JOIN 
+                    Invoice_details id ON p.id = id.id_partner
+                INNER JOIN 
+                    evaluate e ON e.id_partner = p.id
+                WHERE 
+                    id.id_partner = :id_partner
+                    AND id.order_status = 6
+                    AND id.cancellation_time_completed BETWEEN :start_date AND :end_date
+                    AND e.date BETWEEN :start_date AND :end_date;
+               '''
+
+    # Execute the first SQL query
+    filtered_data_1 = await db.fetch_all(sql_query, values={"id_partner": user['id'], "start_date": start_datetime_1, "end_date": end_datetime_1})
+
+    # Execute the second SQL query
+    filtered_data_2 = await db.fetch_all(sql_query, values={"id_partner": user['id'], "start_date": start_datetime_2, "end_date": end_datetime_2})
+
+    result_json = [
+       {
+            "vcdl": filtered_data_1[0]['vcdl'] if filtered_data_1 else 0,
+            "price": filtered_data_1[0]['price'] if filtered_data_1 else 0,
+            "blt": filtered_data_1[0]['blt'] if filtered_data_1 else 0,
+            "blx": filtered_data_1[0]['blx'] if filtered_data_1 else 0
+        },
+       {
+            "vcdl": filtered_data_2[0]['vcdl'] if filtered_data_2 else 0,
+            "price": filtered_data_2[0]['price'] if filtered_data_2 else 0,
+            "blt": filtered_data_2[0]['blt'] if filtered_data_2 else 0,
+            "blx": filtered_data_2[0]['blx'] if filtered_data_2 else 0
+        }
+    ]
+
+
+    return JSONResponse(content={"statistics":result_json, "status": "OK"}, media_type="application/json; charset=UTF-8")
+
+
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, current_user: dict = Depends(get_database)):
+async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_database)):
     await websocket.accept()
-    websockets.append(websocket)
+    clients.append(websocket)
     try:
         while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        websockets.remove(websocket)
+            try:
+                message = await websocket.receive_text()
+                await save_message_to_database(message, db)
+                for client in clients:
+                    if client.application_state == WebSocketState.CONNECTED:
+                        print(message)
+                        await client.send_text(message)
+            except WebSocketDisconnect:
+                print(f"Client {websocket.client} disconnected")
+                break
+            except Exception as e:
+                print(f"Error receiving message: {e}")
+                break
+    except Exception as e:
+        print(f"Error in WebSocket connection: {e}")
+    finally:
+        if websocket in clients:
+            clients.remove(websocket)
+
+
+async def save_message_to_database(message: str, db):
+    try:
+        idTN = "TN-" + random_id()
+        data = json.loads(message)
+
+        # Bắt đầu một phiên giao dịch
+        async with db.transaction():
+            await db.execute(
+                TinNhan.__table__.insert().values(
+                    id=idTN,
+                    id_nguoi_gui=data['id_nguoi_gui'],
+                    id_phong_chat=data['id_phong_chat'],
+                    noi_dung=data['noi_dung'],
+                    thoi_gian=data['thoi_gian']
+                )
+            )
+            await db.execute(
+                update(PhongChat).where(PhongChat.id == data['id_phong_chat']).values(
+                    tin_nhan_cuoi_cung=data['noi_dung'],
+                    thoi_gian=data['thoi_gian']
+                )
+            )
+    except Exception as e:
+        print(f"Error saving message to database: {e}")
+
+@app.get("/get-chat", response_model=Message)
+async def get_chat(id: str, db: Session = Depends(get_database)):
+    query = """
+        SELECT * FROM tin_nhan 
+        WHERE id_phong_chat = :id
+        ORDER BY thoi_gian ASC;
+    """
+    db_messages = await db.fetch_all(query, values={"id": id})
+
+    messages = [dict(row) for row in db_messages]
+
+    response_data = {"messages": messages, "status": "OK"}
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+@app.get("/get-phong-chat/", response_model=Message)
+async def get_chat(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    user = await get_users(db, current_user["sub"])
+
+    query = """
+        WITH UserChats AS (
+    SELECT 
+        tvc.id_phong_chat AS idPC
+    FROM thanh_vien_chat tvc 
+    WHERE tvc.id_user = :id
+)
+SELECT 
+    tvc.id AS idTVC,
+    tvc.id_user AS idU,
+    u.image,
+    u.name AS nameU,
+    u.phoneNumber,
+    u.one_star,
+    u.two_star,
+    u.three_star,
+    u.four_star,
+    u.five_star,
+    tvc.id_phong_chat AS idPC,
+    tvc.da_doc,
+    pt.tin_nhan_cuoi_cung,
+    pt.thoi_gian AS TGNT,
+    pt.thoi_gian_tao_phong AS TGTP
+FROM thanh_vien_chat tvc
+INNER JOIN phong_chat pt ON pt.id = tvc.id_phong_chat
+INNER JOIN partner u ON tvc.id_user = u.id
+WHERE tvc.id_phong_chat IN (SELECT idPC FROM UserChats)
+AND tvc.id_user != :id
+ORDER BY pt.thoi_gian DESC;
+
+
+    """
+    db_messages = await db.fetch_all(query, values={"id": user['id']})
+
+    messages = [dict(row) for row in db_messages]
+
+    response_data = {"phong-chat": messages, "status": "OK"}
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+@app.get("/partner/get-phong-chat/", response_model=Message)
+async def get_chat(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    user = await get_partner(db, current_user["sub"])
+
+    query = """
+        WITH UserChats AS (
+    SELECT 
+        tvc.id_phong_chat AS idPC
+    FROM thanh_vien_chat tvc 
+    WHERE tvc.id_user = :id
+)
+SELECT 
+    tvc.id AS idTVC,
+    tvc.id_user AS idU,
+    u.image,
+    u.name AS nameU,
+    u.phoneNumber,
+    tvc.id_phong_chat AS idPC,
+    tvc.da_doc,
+    pt.tin_nhan_cuoi_cung,
+    pt.thoi_gian AS TGNT,
+    pt.thoi_gian_tao_phong AS TGTP
+FROM thanh_vien_chat tvc
+INNER JOIN phong_chat pt ON pt.id = tvc.id_phong_chat
+INNER JOIN users u ON tvc.id_user = u.id
+WHERE tvc.id_phong_chat IN (SELECT idPC FROM UserChats)
+AND tvc.id_user != :id
+ORDER BY pt.thoi_gian DESC;
+
+    """
+    db_messages = await db.fetch_all(query, values={"id": user['id']})
+
+    messages = [dict(row) for row in db_messages]
+
+    response_data = {"phong-chat": messages, "status": "OK"}
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+
+@app.post("/create-chat", response_model=Messageid)
+async def create_chat(id_user: str, current_user: dict = Depends(verify_jwt_token),
+                      db: Session = Depends(get_database)):
+    # Kiểm tra xem hai người dùng đã có chung phòng chat chưa
+    user_id = ""
+    if id_user[0] == "K":
+        user = await get_partner(db, current_user["sub"])
+        user_id = user['id']
+
+    else:
+        user = await get_users(db, current_user["sub"])
+        user_id = user['id']
+
+    query = """
+            SELECT phong_chat.id 
+            FROM phong_chat 
+            JOIN thanh_vien_chat AS tv1 ON phong_chat.id = tv1.id_phong_chat 
+            JOIN thanh_vien_chat AS tv2 ON phong_chat.id = tv2.id_phong_chat 
+            WHERE tv1.id_user = :user_id AND tv2.id_user = :id_user
+        """
+    result = await db.fetch_one(query, {"user_id": user_id, "id_user": id_user})
+
+    if result:
+        existing_chat = result["id"]
+        return Messageid(detail=-1, id = existing_chat)
+
+    # Tạo phòng chat mới
+    id_pc = "PC-" + random_id()
+    current_datetime = datetime.now()
+    formatted_datetime = current_datetime.strftime("%d/%m/%Y %H:%M:%S")
+    id_tvc1 = "TVC-" + random_id()
+    id_tvc2 = "TVC-" + random_id()
+    async with db.transaction():
+
+        # tạo phòng chat
+        await db.execute(PhongChat.__table__.insert().values(
+            id=id_pc,
+            tin_nhan_cuoi_cung="",
+            thoi_gian="",
+            thoi_gian_tao_phong=formatted_datetime
+        ))
+
+        # Thêm hai người dùng vào phòng chat mới
+        await db.execute(ThanhVienChat.__table__.insert().values(
+            id=id_tvc1,
+            id_user=user_id,
+            id_phong_chat=id_pc,
+            da_doc=0
+        ))
+        await db.execute(ThanhVienChat.__table__.insert().values(
+            id=id_tvc2,
+            id_user=id_user,
+            id_phong_chat=id_pc,
+            da_doc=0
+        ))
+
+    return Messageid(detail=0, id=id_pc)
 

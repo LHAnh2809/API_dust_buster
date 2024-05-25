@@ -67,17 +67,22 @@ def get_weekday_string(working_day):
     else:
         return "Không xác định"
 
+
 def get_week_string(working_day):
     today = datetime.now().date()
 
-    # Tính số ngày chênh lệch giữa working_day và ngày hiện tại
-    delta_days = (today - working_day).days
+    # Lấy chỉ số của ngày trong tuần của ngày hiện tại (today), bắt đầu từ thứ hai (0)
+    today_index = today.weekday()
 
-    # Lấy chỉ số của ngày trong tuần
-    day_index = (delta_days % 7)
+    # Lấy chỉ số của ngày trong tuần của ngày làm việc (working_day), bắt đầu từ thứ hai (0)
+    working_day_index = working_day.weekday()
+
+    # Tính số ngày chênh lệch giữa today và working_day
+    delta_days = (working_day_index - today_index) % 7
 
     # Trả về số thứ tự của ngày trong tuần
-    return day_index
+    return delta_days
+
 
 
 def get_date_range(start_date_str, end_date_str):
@@ -207,6 +212,11 @@ async def get_db_location(db,id:str):
 
 async def get_db_user(db,id:str):
     query = (Users.__table__.select().where(Users.id == id))
+    service = await db.fetch_all(query)
+    return service
+
+async def get_db_partner(db,id:str):
+    query = (Partner.__table__.select().where(Partner.id == id))
     service = await db.fetch_all(query)
     return service
 
