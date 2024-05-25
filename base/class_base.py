@@ -240,18 +240,7 @@ class AddServices(Base):
     note = Column(String, nullable=False)
     money = Column(Integer, nullable=False)
 
-class BusinessDuration(Base):
-    __tablename__ = "business_duration"
 
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-
-class BusinessType(Base):
-    __tablename__ = "business_type"
-
-    id = Column(String, primary_key=True)
-    icon = Column(String, nullable=False)
-    name = Column(String, nullable=False)
 
 class Evaluate(Base):
     __tablename__ = "evaluate"
