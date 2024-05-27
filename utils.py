@@ -154,9 +154,9 @@ async def get_partner(db, email: str):
     user = await db.fetch_one(query)
     return user
 
-async def get_partner_id(db, id: str):
-    query = Partner.__table__.select().where(Partner.id == id)
-    user = await db.fetch_one(query)
+async def get_all_partner(db):
+    query = Partner.__table__.select()
+    user = await db.fetch_all(query)
     return user
 
 async def get_partner_id(db, id: str):

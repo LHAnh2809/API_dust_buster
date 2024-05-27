@@ -19,7 +19,7 @@ from utils import get_db_location, generate_referral_code, convert_string, get_u
     get_select_service_duration, get_select_service, delete_otp_after_delay, random_id, create_jwt_token, \
     verify_jwt_token, get_admin, oauth2_scheme, token_blacklist, get_delete_location, get_select_slides, \
     get_select_promotion, get_delete_slide, get_select_blog, current_date, get_select_promotion_id, get_db_user, \
-    get_partner, extract_indexes, get_weekday_string, get_partner_id, get_week_string, get_db_partner
+    get_partner, extract_indexes, get_weekday_string, get_partner_id, get_week_string, get_db_partner, get_all_partner
 from mail.otb_email import send_otp_email
 from mail.cskh_email import send_cskh_email
 import json
@@ -262,12 +262,13 @@ async def select_admin_information(current_user: dict = Depends(verify_jwt_token
 
 # Tạo dịch vụ
 @app.post("/admin/create-service/", response_model=Message)
-async def create_service(add_service: ServiceCreate, db: Session = Depends(get_database)):
+async def create_service(add_service: ServiceCreate, current_user: dict = Depends(verify_jwt_token),db: Session = Depends(get_database)):
     db_service = Service(**add_service.dict())
-
+    admin = await get_admin(db, current_user["sub"])
     async with db.transaction():
         await db.execute(Service.__table__.insert().values(
             id=db_service.id,
+            id_admin=admin['id'],
             name= db_service.name,
             icon= db_service.icon,
             label=db_service.label,
@@ -313,14 +314,15 @@ async def update_all_service(service_update: ServiceAllUpdate, db: Session = Dep
 
 # Tạo Thời lượng
 @app.post("/admin/create-service-duration/", response_model=Message)
-async def create_service_duration(add_service_duration: ServiceDurationCreate, db: Session = Depends(get_database)):
+async def create_service_duration(add_service_duration: ServiceDurationCreate, current_user: dict = Depends(verify_jwt_token),db: Session = Depends(get_database)):
     
     id = "TL-" + str(random_id())
     db_service_duration = ServiceDurationCreate(id=id, **add_service_duration.dict())
-
+    admin = await get_admin(db, current_user["sub"])
     async with db.transaction():
         await db.execute(ServiceDuration.__table__.insert().values(
             id=id,
+            id_admin=admin['id'],
             time= db_service_duration.time,
             acreage= db_service_duration.acreage,
             room= db_service_duration.room,
@@ -370,10 +372,10 @@ async def update_service_duration(service_duration_update: ServiceDurationUpdate
 
 #--------------------------Blog-------------------------
 @app.post("/admin/create-blog/", response_model=Message)
-async def create_blog(add_blog: CreateBlog, db: Session = Depends(get_database)):
+async def create_blog(add_blog: CreateBlog,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
 
     db_blog = CreateBlog(**add_blog.dict())
-
+    user = await get_admin(db, current_user["sub"])
     async with db.transaction():
         await db.execute(Blog.__table__.insert().values(
             id=db_blog.id,
@@ -382,7 +384,8 @@ async def create_blog(add_blog: CreateBlog, db: Session = Depends(get_database))
             title=db_blog.title,
             content=db_blog.content,
             date=current_date,
-            status=1
+            status=1,
+            id_admin=user['id']
         ))
 
     return Message(detail=0)
@@ -434,13 +437,15 @@ async def update_blog_status(blog_update: UpdateBlogStatus, db: Session = Depend
 # ----------------khuyến mãi-------------------------
 
 @app.post("/admin/create-promotion/", response_model=Message)
-async def create_promotion(add_promotion: CreatePromotion, db: Session = Depends(get_database)):
+async def create_promotion(add_promotion: CreatePromotion,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
 
     db_promotion = Promotion(**add_promotion.dict())
+    user = await get_admin(db, current_user["sub"])
 
     async with db.transaction():
         await db.execute(Promotion.__table__.insert().values(
             id=db_promotion.id,
+            id_admin=user['id'],
             name=db_promotion.name,
             code=db_promotion.code,
             start_day=db_promotion.start_day,
@@ -494,16 +499,17 @@ async def update_promotion(promotion_update: UpdatePromotion, db: Session = Depe
 
 #-------------------------------------Slides-------------------------------------
 @app.post("/admin/create-slides/", response_model=Message)
-async def create_slide(add_promotion: CreateSlide, db: Session = Depends(get_database)):
+async def create_slide(add_promotion: CreateSlide,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
     current_date = datetime.now().strftime("%d/%m/%Y")
     db_slide = CreateSlide(**add_promotion.dict())
-
+    user = await get_admin(db, current_user["sub"])
     async with db.transaction():
         await db.execute(Slides.__table__.insert().values(
             id=db_slide.id,
             imageUrl=db_slide.imageUrl,
             newsUrl=db_slide.newsUrl,
-            date=current_date
+            date=current_date,
+            id_admin=user['id']
         ))
 
     return Message(detail=0)
@@ -533,7 +539,33 @@ async def update_slide(update_sl: UpdateSlide, db: Session = Depends(get_databas
 
     return {"detail": "OK"}
 
+#----------------Đối tác----------------
+@app.get("/admin/get-doi-tac/")
+async def get_doi_tac(db: Session = Depends(get_database)):
+    rows = await get_all_partner(db)
 
+    # Chuyển đổi các dòng thành danh sách từ điển
+    partner = [dict(row) for row in rows]
+
+    # Tạo một từ điển chứa dữ liệu trả về
+    response_data = {"partner": partner, "status": "OK"}
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-one-doi-tac/")
+async def get_one_doi_tac(id: str, db: Session = Depends(get_database)):
+    row = await get_partner_id(db, id)
+
+    if row:
+        # Chuyển đổi dòng dữ liệu thành một từ điển nếu có
+        partner = dict(row)
+        # Tạo một từ điển chứa dữ liệu trả về
+        response_data = {"partner": partner, "status": "OK"}
+    else:
+        # Nếu không có dữ liệu, trả về thông báo lỗi
+        response_data = {"status": "Error", "message": "Partner not found"}
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
 
 #-----------Khách Hàng------------------
 
@@ -713,7 +745,7 @@ async def create_customer_promotions(add_create_promotions: CustomerPromotionsCr
 
     return Message(detail=0)
 
-#kiểm trakhuyến mãi
+#kiểm tra khuyến mãi
 @app.post("/check-customer-promotions/", response_model=Message)
 async def check_customer_promotions(add_check_promotions: CustomerPromotionsCreate,current_user: dict = Depends(verify_jwt_token),  db: Session = Depends(get_database)):
     user = await get_users(db, current_user["sub"])
@@ -1609,7 +1641,7 @@ async def post_periodically_canneled(stt: int, idI: str, money: int, current_use
 
     print(idI)
     user = await get_users(db, current_user["sub"])
-    idBF = "idBF" + random_id()
+    idBF = "BF" + random_id()
     current_datetime = datetime.now()
     if stt == 0:
         moneys = user['money'] + money

@@ -43,6 +43,7 @@ class Promotion(Base):
     label = Column(Integer, nullable=False)
     discount = Column(Integer, nullable=False)
     point = Column(Integer, nullable=False)
+    id_admin = Column(String, nullable=False)
 
 class Slides(Base):
     __tablename__ = "slides"
@@ -51,6 +52,7 @@ class Slides(Base):
     imageUrl = Column(String, nullable=False)
     newsUrl = Column(String)
     date = Column(String, nullable=False)
+    id_admin = Column(String, nullable=False)
 
 class Blog(Base):
     __tablename__ = "blog"
@@ -62,6 +64,7 @@ class Blog(Base):
     content = Column(String)
     date = Column(String)
     status = Column(Integer)
+    id_admin = Column(String, nullable=False)
 
 class Users(Base):
     __tablename__ = "users"
@@ -193,6 +196,7 @@ class Service(Base):
     __tablename__ = "service"
 
     id = Column(String, primary_key=True)
+    id_admin = Column(String, nullable=False)
     name = Column(String, nullable=False)
     icon = Column(String, nullable=False)
     label = Column(Integer)
@@ -202,6 +206,7 @@ class ServiceDuration(Base):
     __tablename__ = "service_duration"
 
     id = Column(String, primary_key=True)
+    id_admin=Column(String)
     time = Column(Integer)
     acreage = Column(String)
     room = Column(String, nullable=False)
