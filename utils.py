@@ -144,6 +144,16 @@ async def get_admin(db, username: str):
     user = await db.fetch_one(query)
     return user
 
+async def get_one_admin(db, id: str):
+    query = Admin.__table__.select().where(Admin.id == id)
+    user = await db.fetch_one(query)
+    return user
+
+async def get_all_admin(db):
+    query = Admin.__table__.select()
+    user = await db.fetch_all(query)
+    return user
+
 async def get_users(db, email: str):
     query = Users.__table__.select().where(Users.email == email)
     user = await db.fetch_one(query)
