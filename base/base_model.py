@@ -191,6 +191,21 @@ class CreateInvoice(BaseModel):
     duration: str
     number_sessions: str
     removal_date: str
+    
+class CreateAdmin(BaseModel):
+    id: str
+    username: str
+    password: str
+    email: str
+    phonenumber: str
+    name: str
+    sex: int
+    datebirth: str
+    image: str
+    permanent_address: str
+    temporary_residence_address: str
+    position: str
+    role: int
 
 class SelectJobDetails(BaseModel):
     id: str
