@@ -8,6 +8,7 @@ class Admin(Base):
     __tablename__ = "admin"
 
     id = Column(String, primary_key=True)
+    id_admin = Column(String, nullable=False)
     username = Column(String, nullable=False)
     password = Column(String, nullable=False)
     email = Column(String)
