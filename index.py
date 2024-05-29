@@ -9,18 +9,18 @@ from databases import Database
 from base.class_base import OTP, Base, Admin, Service, ServiceDuration, Users, Location, Promotion, Slides, Blog, \
     CustomerPromotions, Invoice, InvoiceDetails, AcceptJob, Notification, Partner, BalanceFluctuations, Evaluate, \
     LoaiBoCV, TinNhan, PhongChat, ThanhVienChat
-from base.base_model import CreateLocation, ReferralCode, ForgotPassword, RequestEmail, OTPUserCreate, UsersCreate, \
+from base.base_model import CreateAdmin, CreateLocation, ReferralCode, ForgotPassword, RequestEmail, OTPUserCreate, UsersCreate, \
     ServiceDurationUpdate, ServiceUpdateStatus, ServiceDurationCreate, ServiceAllUpdate, ServiceUpdate, Message, \
     ChangePassword, AdminAvatar, OTPCreate, OTPVerify, ResetPassword, AdminEmail, ServiceCreate, DeleteLoccation, \
     UpdateLoccation, CreatePromotion, UpdatePromotion, CreateSlide, CreateBlog, UpdateBlog, DeleteSlides, UpdateSlide, \
     UpdateBlogStatus, SelectPromotionId, CustomerPromotionsCreate, GCoinUpdale, CreateInvoice, SelectJobDetails, \
     CreatePartner, CreateWallet, CreateWalletU, CreateDanhGia, Messageid
-from utils import get_db_location, generate_referral_code, convert_string, get_users, convert_date, \
+from utils import get_all_admin, get_db_location, generate_referral_code, convert_string, get_one_admin, get_users, convert_date, \
     get_select_service_duration, get_select_service, delete_otp_after_delay, random_id, create_jwt_token, \
     verify_jwt_token, get_admin, oauth2_scheme, token_blacklist, get_delete_location, get_select_slides, \
     get_select_promotion, get_delete_slide, get_select_blog, current_date, get_select_promotion_id, get_db_user, \
     get_partner, extract_indexes, get_weekday_string, get_partner_id, get_week_string, get_db_partner, get_all_partner
-from mail.otb_email import send_otp_email
+from mail.send_emailTemp import send_email_temp
 from mail.cskh_email import send_cskh_email
 import json
 from typing import List
@@ -109,27 +109,25 @@ async def logout(token: str = Depends(oauth2_scheme)):
 
 # Đổi mật khẩu người dùng
 @app.put("/admin/change-password/", response_model=Message)
-async def change_password(change_old_password: ChangePassword, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+async def change_password(change_password: ChangePassword, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
     # Lấy thông tin người dùng từ cơ sở dữ liệu
     user = await get_admin(db, current_user["sub"])
-    update_new_password = ChangePassword(**change_old_password.dict())
-
+    print(user['password'])
     # Kiểm tra mật khẩu cũ
-    if user["password"] != update_new_password.old_password:
+    if user['password'] != change_password.old_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=-1,
         )
     
     # Kiểm tra trùng mật khẩu
-    if update_new_password.new_password != update_new_password.enter_the_password:
+    if change_password.new_password != change_password.enter_the_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=-2,
         )
-    
     update_query = update(Admin).where(Admin.id == user['id']).values(
-            password=update_new_password.new_password)
+            password=change_password.new_password)
     await db.execute(update_query)
 
     return Message(detail=0)
@@ -176,7 +174,9 @@ async def request_otp(otp_data: OTPCreate, background_tasks: BackgroundTasks, db
                 code= otp_code,
             ))
         
-        send_otp_email(new_otp_data.email, otp_code, user['name'])
+        content = f"Xin chào {user['name']}!\n\nMã của bạn là {otp_code}\n\nNhóm,\n3Clean"
+        title = f"Mã của bạn - {otp_code}"
+        send_email_temp(new_otp_data.email, content, title)
 
         background_tasks.add_task(delete_otp_after_delay, new_otp_data.email, db)
 
@@ -206,8 +206,9 @@ async def request_otp_new_email(otp_data: OTPCreate, background_tasks: Backgroun
             email=new_otp_data.email,
             code= otp_code,
         ))
-    
-    send_otp_email(new_otp_data.email, otp_code, user['name'])
+    content = f"Xin chào {user['name']}!\n\nMã của bạn là {otp_code}\n\nNhóm,\n3Clean"
+    title = f"Mã của bạn - {otp_code}"
+    send_email_temp(new_otp_data.email, content, title)
 
     background_tasks.add_task(delete_otp_after_delay, new_otp_data.email, db)
 
@@ -216,8 +217,7 @@ async def request_otp_new_email(otp_data: OTPCreate, background_tasks: Backgroun
 # Đường dẫn để xác minh OTP
 @app.post("/verify-otp/",response_model=Message)
 async def verify_otp(otp_data: OTPVerify, db: Session = Depends(get_database)):
-    print(otp_data.email)
-    print(otp_data.otp)
+
     query = select(OTP).where(OTP.email == otp_data.email)
     otp_old = await db.fetch_one(query)
     if otp_old and otp_old['code'] == otp_data.otp:
@@ -248,6 +248,19 @@ async def reset_password(form_data: ResetPassword ,db: Session = Depends(get_dat
 
     return Message(detail=0)
 
+@app.put("/admin/update-status-partner/",response_model=Message)
+async def update_status_partner(id: str, status: int, email: str, name: str, db: Session = Depends(get_database)):
+    otp_update_query = update(Partner).where(Partner.id == id).values(ban=status)
+    await db.execute(otp_update_query)
+    current_datetime = datetime.now()
+    if status == 1:
+        content = f"Xin chào {name}!\n\n Tài khoản đối tác của bạn đã bị khóa kể từ {current_datetime}.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\n Team 3Clean"
+        title = f"Thông báo khóa tài khoản"
+    else:
+        content = f"Xin chào {name}!\n\n Tài khoản đối tác của bạn đã mở khóa kể từ {current_datetime} và đã có thể hoạt động.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\n Team 3Clean"
+        title = f"Thông báo mở tài khoản"
+    send_email_temp(email, content, title)
+    return Message(detail=0)
 # Thông tin admin
 @app.get("/admin/select-admin-information/")
 async def select_admin_information(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
@@ -257,6 +270,89 @@ async def select_admin_information(current_user: dict = Depends(verify_jwt_token
     # Trả về dữ liệu bảo vệ
     return {"admin_info": admin}
 
+@app.get("/admin/select-admin/")
+async def select_admin(id:str, db: Session = Depends(get_database)):
+    
+    rows = await get_one_admin(db, id)
+
+    # Tạo một từ điển chứa dữ liệu trả về
+    response_data = {"admin": rows, "status": "OK"}
+
+    return response_data
+
+@app.get("/admin/select-all-admin/")
+async def select_all_admin(db: Session = Depends(get_database)):
+    # Lấy thông tin người dùng từ cơ sở dữ liệu
+    rows = await get_all_admin(db)
+    
+    # Trả về dữ liệu bảo vệ
+    admin = [dict(row) for row in rows]
+
+    # Tạo một từ điển chứa dữ liệu trả về
+    response_data = {"admin": admin, "status": "OK"}
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+
+@app.post("/admin/create-admin/", response_model=Message)
+async def create_admin(add_admin: CreateAdmin, current_user: dict = Depends(verify_jwt_token),db: Session = Depends(get_database)):
+    db_admin = Admin(**add_admin.dict())
+    current_datetime = datetime.now()
+    admin = await get_admin(db, current_user["sub"])
+    async with db.transaction():
+        await db.execute(Admin.__table__.insert().values(
+            id=db_admin.id,
+            id_admin=admin['id'],
+            username=db_admin.username,
+            password=db_admin.password,
+            email=db_admin.email,
+            phonenumber=db_admin.phonenumber,
+            name=db_admin.name,
+            sex=db_admin.sex,
+            datebirth=db_admin.datebirth,
+            image=db_admin.image,
+            permanent_address=db_admin.permanent_address,
+            temporary_residence_address=db_admin.temporary_residence_address,
+            position=db_admin.position,
+            joiningdate=current_datetime,
+            role=db_admin.role,
+            status=1
+        ))
+
+    return Message(detail=0)
+
+@app.put("/admin/update-admin/", response_model=Message)
+async def update_admin(add_admin: CreateAdmin, current_user: dict = Depends(verify_jwt_token),db: Session = Depends(get_database)):
+    db_admin = Admin(**add_admin.dict())
+    admin = await get_admin(db, current_user["sub"])
+    update_query = update(Admin).where(Admin.id == db_admin.id).values(
+            id_admin=admin['id'],
+            username=db_admin.username,
+            password=db_admin.password,
+            email=db_admin.email,
+            phonenumber=db_admin.phonenumber,
+            name=db_admin.name,
+            sex=db_admin.sex,
+            datebirth=db_admin.datebirth,
+            image=db_admin.image,
+            permanent_address=db_admin.permanent_address,
+            temporary_residence_address=db_admin.temporary_residence_address,
+            position=db_admin.position,
+            role=db_admin.role)
+    await db.execute(update_query)
+    
+
+    return Message(detail=0)
+
+@app.put("/admin/update-status-admin/", response_model=Message)
+async def update_status_admin(id: str, status: int, current_user: dict = Depends(verify_jwt_token),db: Session = Depends(get_database)):
+    admin = await get_admin(db, current_user["sub"])
+    update_query = update(Admin).where(Admin.id == id).values(
+            id_admin=admin['id'],
+            status=status)
+    await db.execute(update_query)
+    
+
+    return Message(detail=0)
 
 #---------------------------Quản lý tác vụ-------------------------------------------------
 
@@ -264,7 +360,9 @@ async def select_admin_information(current_user: dict = Depends(verify_jwt_token
 @app.post("/admin/create-service/", response_model=Message)
 async def create_service(add_service: ServiceCreate, current_user: dict = Depends(verify_jwt_token),db: Session = Depends(get_database)):
     db_service = Service(**add_service.dict())
+
     admin = await get_admin(db, current_user["sub"])
+    print(db_service.id)
     async with db.transaction():
         await db.execute(Service.__table__.insert().values(
             id=db_service.id,
@@ -289,22 +387,22 @@ async def select_service(db: Session = Depends(get_database)):
 async def update_service(service_update: ServiceUpdate, db: Session = Depends(get_database)):
     
     _update = Service(**service_update.dict())
-    
-    update_query = update(Service).where(Service.id == _update.id).values(
-            status=_update.status)
+    print(_update.status)
+    update_query = update(Service).where(Service.id == _update.id).values(status=_update.status)
     await db.execute(update_query)
 
     return Message(detail=0)
 
 # Sửa dịch vụ
 @app.put("/admin/update-all-service/",response_model=Message)
-async def update_all_service(service_update: ServiceAllUpdate, db: Session = Depends(get_database)):
+async def update_all_service(service_update: ServiceAllUpdate,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
     
     _update = Service(**service_update.dict())
-    
+    admin = await get_admin(db, current_user["sub"])
     update_query = update(Service).where(Service.id == _update.id).values(
             name=_update.name,
             icon= _update.icon,
+            id_admin=admin['id']
             )
     await db.execute(update_query)
 
@@ -353,15 +451,16 @@ async def update_status_service_duration(service_duration_update: ServiceUpdateS
 
 # Sửa thời lượng
 @app.put("/admin/update-service-duration/",response_model=Message)
-async def update_service_duration(service_duration_update: ServiceDurationUpdate, db: Session = Depends(get_database)):
+async def update_service_duration(service_duration_update: ServiceDurationUpdate, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
     
     _update = ServiceDurationUpdate(**service_duration_update.dict())
-    
+    admin = await get_admin(db, current_user["sub"])
     update_query = update(ServiceDuration).where(ServiceDuration.id == _update.id).values(
             time= _update.time,
             acreage= _update.acreage,
             room= _update.room,
-            money= _update.money
+            money= _update.money,
+            id_admin=admin['id']
             )
     await db.execute(update_query)
 
@@ -474,10 +573,10 @@ async def select_promotion_id(select_id_promotion: SelectPromotionId,  db: Sessi
 
 # Update khuyến mãi
 @app.put("/admin/update-promotion/", response_model=Message)
-async def update_promotion(promotion_update: UpdatePromotion, db: Session = Depends(get_database)):
+async def update_promotion(promotion_update: UpdatePromotion,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
 
     _update = UpdatePromotion(**promotion_update.dict())
-
+    user = await get_admin(db, current_user["sub"])
     update_query = update(Promotion).where(Promotion.id == _update.id).values(
         name=_update.name,
         code=_update.code,
@@ -486,8 +585,8 @@ async def update_promotion(promotion_update: UpdatePromotion, db: Session = Depe
         content=_update.content,
         label=_update.label,
         discount=_update.discount,
-        point=_update.point
-
+        point=_update.point,
+        id_admin=user['id']
         )
     await db.execute(update_query)
 
@@ -528,12 +627,13 @@ async def delete_slide(delete_sl: DeleteSlides, db: Session = Depends(get_databa
 
     return {"detail": "OK"}
 
-@app.put("admin/update-slides/")
-async def update_slide(update_sl: UpdateSlide, db: Session = Depends(get_database)):
-
+@app.put("/admin/update-slides/")
+async def update_slide(update_sl: UpdateSlide,current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
+    admin = await get_admin(db, current_user["sub"])
     update_slides = update(Slides).where(Slides.id == update_sl.id).values(
         imageUrl=update_sl.imageUrl,
-        newsUrl=update_sl.newsUrl
+        newsUrl=update_sl.newsUrl,
+        id_admin=admin['id']
     )
     await  db.execute(update_slides)
 
@@ -653,7 +753,9 @@ async def request_otp_user(otp_data: OTPUserCreate, background_tasks: Background
             code= otp_code,
             name=name
         ))
-    send_otp_email(new_otp_data.email, otp_code, name)
+    content = f"Xin chào {name}!\n\nMã của bạn là {otp_code}\n\nNhóm,\n3Clean"
+    title = f"Mã của bạn - {otp_code}"
+    send_email_temp(new_otp_data.email, content, title)
 
     background_tasks.add_task(delete_otp_after_delay, new_otp_data.email, db)
 
@@ -1678,6 +1780,7 @@ async def get_user(current_user: dict = Depends(verify_jwt_token), db: Session =
     response_data = {"user": user, "status": "OK"}
 
     return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+    
 @app.get("/partner/statistics/")
 async def get_statistics(id_partner: str, start_date: str, end_date: str, current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
     # Convert string input to datetime objects
@@ -1908,10 +2011,6 @@ ORDER BY
     return (JSONResponse(content={"3clean_wallet": result_json, "status": "OK"},
                          media_type="application/json; charset=UTF-8"))
 
-
-# Tao tai khoan doi tac
-class CreateWall:
-    pass
 
 
 @app.post("/post-recharge/", response_model=Message)
