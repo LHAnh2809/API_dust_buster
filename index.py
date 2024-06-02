@@ -1,9 +1,12 @@
+
+import os
+from uuid import uuid4
 from starlette.middleware.cors import CORSMiddleware
 from starlette.websockets import WebSocketState
 
 from config.config import DATABASE_URL
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, status
-from sqlalchemy import create_engine, select, update, desc, text, func, and_
+from fastapi import FastAPI, File, HTTPException, Depends, BackgroundTasks, UploadFile, status
+from sqlalchemy import create_engine, select, update, desc, text
 from sqlalchemy.orm import sessionmaker, Session
 from databases import Database
 from base.class_base import OTP, Base, Admin, Service, ServiceDuration, Users, Location, Promotion, Slides, Blog, \
@@ -13,9 +16,9 @@ from base.base_model import CreateAdmin, CreateLocation, ReferralCode, ForgotPas
     ServiceDurationUpdate, ServiceUpdateStatus, ServiceDurationCreate, ServiceAllUpdate, ServiceUpdate, Message, \
     ChangePassword, AdminAvatar, OTPCreate, OTPVerify, ResetPassword, AdminEmail, ServiceCreate, DeleteLoccation, \
     UpdateLoccation, CreatePromotion, UpdatePromotion, CreateSlide, CreateBlog, UpdateBlog, DeleteSlides, UpdateSlide, \
-    UpdateBlogStatus, SelectPromotionId, CustomerPromotionsCreate, GCoinUpdale, CreateInvoice, SelectJobDetails, \
+    UpdateBlogStatus, SelectPromotionId, CustomerPromotionsCreate, CreateInvoice, \
     CreatePartner, CreateWallet, CreateWalletU, CreateDanhGia, Messageid
-from utils import get_all_admin, get_db_location, generate_referral_code, convert_string, get_one_admin, get_users, convert_date, \
+from utils import get_all_admin, get_all_users, get_db_location, generate_referral_code, get_one_admin, get_users, \
     get_select_service_duration, get_select_service, delete_otp_after_delay, random_id, create_jwt_token, \
     verify_jwt_token, get_admin, oauth2_scheme, token_blacklist, get_delete_location, get_select_slides, \
     get_select_promotion, get_delete_slide, get_select_blog, current_date, get_select_promotion_id, get_db_user, \
@@ -40,7 +43,11 @@ Base.metadata.create_all(bind=engine)
 # Tạo đối tượng SessionLocal để tương tác với cơ sở dữ liệu
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 app = FastAPI(root_path="/api/v1")
+UPLOAD_DIR = "assets/images/"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
 
+uploader = FileUploader(upload_dir=UPLOAD_DIR)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Điều chỉnh lại để chỉ cho phép các nguồn cụ thể nếu cần
@@ -249,18 +256,19 @@ async def reset_password(form_data: ResetPassword ,db: Session = Depends(get_dat
     return Message(detail=0)
 
 @app.put("/admin/update-status-partner/",response_model=Message)
-async def update_status_partner(id: str, status: int, email: str, name: str, db: Session = Depends(get_database)):
+async def update_status_partner(id: str, status: int, email: str, name: str, nameAD: str, db: Session = Depends(get_database)):
     otp_update_query = update(Partner).where(Partner.id == id).values(ban=status)
     await db.execute(otp_update_query)
     current_datetime = datetime.now()
     if status == 1:
-        content = f"Xin chào {name}!\n\n Tài khoản đối tác của bạn đã bị khóa kể từ {current_datetime}.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\n Team 3Clean"
+        content = f"Xin chào {name}!\n\nTài khoản đối tác của bạn đã bị khóa kể từ {current_datetime}.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\nQuản trị viên: {nameAD}\n\nNhóm,\n3Clean"
         title = f"Thông báo khóa tài khoản"
     else:
-        content = f"Xin chào {name}!\n\n Tài khoản đối tác của bạn đã mở khóa kể từ {current_datetime} và đã có thể hoạt động.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\n Team 3Clean"
+        content = f"Xin chào {name}!\n\nTài khoản đối tác của bạn đã mở khóa kể từ {current_datetime} và đã có thể hoạt động.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\nQuản trị viên: {nameAD}\n\nNhóm,\n3Clean"
         title = f"Thông báo mở tài khoản"
     send_email_temp(email, content, title)
     return Message(detail=0)
+
 # Thông tin admin
 @app.get("/admin/select-admin-information/")
 async def select_admin_information(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
@@ -667,6 +675,825 @@ async def get_one_doi_tac(id: str, db: Session = Depends(get_database)):
 
     return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
 
+@app.get("/admin/get-doanh-thu-doi-tac-id", response_model=Message)
+async def get_doanh_thu_doi_tac_id(id: str, start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+       SELECT 
+    id.id,
+    i.id_users,
+    id.name_user,
+    id.price,
+    id.cancellation_time_completed
+    FROM 
+        partner p
+    INNER JOIN 
+        invoice_details id ON p.id = id.id_partner
+    INNER JOIN 
+        invoice i ON i.id = id.id_invoice
+    WHERE
+        id.order_status = 6
+    AND
+        p.id = :user_id
+    AND
+        id.cancellation_time_completed >= :start_date
+    AND
+        id.cancellation_time_completed <= :end_date
+    ORDER BY 
+        id.cancellation_time_completed DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": id,"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'doi-tac-id': [
+            {
+                "id": item['id'],
+                "id_users": item['id_users'],
+                "name_user": item['name_user'],
+                "price": item['price'],
+                "date": item['cancellation_time_completed']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-danh-gia-doi-tac-id", response_model=Message)
+async def get_danh_gia_doi_tac_id(id: str, start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+       SELECT 
+        e.id,
+        e.id_user,
+        u.name,
+        e.star,
+        e.content,
+        e.date
+    FROM 
+        partner p
+    INNER JOIN 
+        evaluate e ON p.id = e.id_partner
+    INNER JOIN 
+        users u ON u.id = e.id_user
+    WHERE
+        p.id = :user_id
+    AND
+        e.date >= :start_date
+    AND
+        e.date <= :end_date
+    ORDER BY 
+        e.date DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": id,"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'doi-tac-id': [
+            {
+                "id": item['id'],
+                "id_user": item['id_user'],
+                "name": item['name'],
+                "star": item['star'],
+                "content": item['content'],
+                "date": item['date']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-hoa-don-all", response_model=Message)
+async def get_hoa_don_all(id: str, start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+       SELECT 
+    id.id,
+    i.id_users,
+    i.label,
+    id.name_user,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    id.location, 
+    id.location2,
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note,
+    id.order_status,
+    id.cancellation_time_completed,
+    id.cancel_job,
+    id.reason_cancellation,
+    id.cancellation_fee
+FROM 
+    partner p
+INNER JOIN 
+    invoice_details id ON p.id = id.id_partner
+INNER JOIN
+    invoice i ON id.id_invoice = i.id
+WHERE
+    id.id_partner = :user_id
+    AND id.cancellation_time_completed >= :start_date
+    AND id.cancellation_time_completed <= :end_date
+ORDER BY 
+    id.cancellation_time_completed DESC;
+
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": id,"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'hoa-don-doi-tac': [
+            {
+                "id": item['id'],
+                "id_users": item['id_users'],
+                "label":item['label'],
+                "name": item['name_user'],
+                "posting_time": item['posting_time'],
+                "working_day": item['working_day'],
+                "work_time": item['work_time'],
+                "room_area": item['room_area'],
+                "location": item['location'],
+                "location2": item['location2'],
+                "price": item['price'],
+                "payment_methods": item['payment_methods'],
+                "premium_service": item['premium_service'],
+                "pet_note": item['pet_note'],
+                "employee_note": item['employee_note'],
+                "order_status": item['order_status'],
+                "status": item['order_status'],
+                "cancellation_time_completed": item['cancellation_time_completed'],
+                "cancel_job": item['cancel_job'],
+                "reason_cancellation": item['reason_cancellation'],
+                "cancellation_fee": item['cancellation_fee']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+
+@app.get("/admin/get-khach-hang/")
+async def get_khach_hang(db: Session = Depends(get_database)):
+    rows = await get_all_users(db)
+
+    # Chuyển đổi các dòng thành danh sách từ điển
+    partner = [dict(row) for row in rows]
+
+    # Tạo một từ điển chứa dữ liệu trả về
+    response_data = {"users": partner, "status": "OK"}
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+
+
+@app.get("/admin/get-khach-hang-id")
+async def get_khach_hang_id(id:str, db: Session = Depends(get_database)):
+    rows = await get_db_user(db, id)
+
+    # Chuyển đổi các dòng thành danh sách từ điển
+
+    user = [dict(row) for row in rows]
+
+    # Tạo một từ điển chứa dữ liệu trả về
+    response_data = {"users": user, "status": "OK"}
+
+    return JSONResponse(content=response_data, media_type="application/json; charset=UTF-8")
+
+
+@app.put("/admin/update-status-user",response_model=Message)
+async def update_status_user(id: str, status: int, email: str, name: str, nameAD: str, db: Session = Depends(get_database)):
+    otp_update_query = update(Users).where(Users.id == id).values(ban=status)
+    await db.execute(otp_update_query)
+    current_datetime = datetime.now()
+    if status == 1:
+        content = f"Xin chào {name}!\n\nTài khoản đối tác của bạn đã bị khóa kể từ {current_datetime}.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\nQuản trị viên: {nameAD}\n\nNhóm,\n3Clean"
+        title = f"Thông báo khóa tài khoản"
+    else:
+        content = f"Xin chào {name}!\n\nTài khoản đối tác của bạn đã mở khóa kể từ {current_datetime} và đã có thể hoạt động.\nMọi thắc mắc vui lòng liên hệ chăm sóc khách hàng.\n\nQuản trị viên: {nameAD}\n\nNhóm,\n3Clean"
+        title = f"Thông báo mở tài khoản"
+    send_email_temp(email, content, title)
+    return Message(detail=0)
+
+
+@app.get("/admin/get-hoa-don-cho-lam-kh", response_model=Message)
+async def get_hoa_don_cho_lam_kh(id: str, start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+        SELECT 
+    id.id,
+    id.id_partner,
+    i.label,
+    id.name_user,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    id.location, 
+    id.location2,
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note,
+    id.order_status,
+    id.cancellation_time_completed,
+    id.cancel_job,
+    id.reason_cancellation,
+    id.cancellation_fee
+FROM 
+    invoice i
+INNER JOIN 
+    invoice_details id ON id.id_invoice = i.id
+WHERE
+    i.id_users = :user_id
+    AND id.posting_time >= :start_date
+    AND id.posting_time <= :end_date
+ORDER BY 
+    id.posting_time DESC;
+
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": id,"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'hoa-don-khach-hang': [
+            {
+                "id": item['id'],
+                "id_partner": item['id_partner'],
+                "label":item['label'],
+                "name": item['name_user'],
+                "posting_time": item['posting_time'],
+                "working_day": item['working_day'],
+                "work_time": item['work_time'],
+                "room_area": item['room_area'],
+                "location": item['location'],
+                "location2": item['location2'],
+                "price": item['price'],
+                "payment_methods": item['payment_methods'],
+                "premium_service": item['premium_service'],
+                "pet_note": item['pet_note'],
+                "employee_note": item['employee_note'],
+                "order_status":  item['order_status'],
+                "status": item['order_status'],
+                "cancellation_time_completed": item['cancellation_time_completed'],
+                "cancel_job": item['cancel_job'],
+                "reason_cancellation": item['reason_cancellation'],
+                "cancellation_fee": item['cancellation_fee']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-hoa-don-lap-lai", response_model=Message)
+async def get_hoa_don_lap_lai(id: str, start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+              SELECT 
+    id.id AS idId,
+    i.id AS idI,
+    id.id_partner,
+    i.repeat_state,
+    i.cancel_repeat,
+    i.repeat,
+    i.duration,
+    i.removal_date,
+    i.label,
+    id.name_user,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    id.location, 
+    id.location2,
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note,
+    id.order_status,
+    id.cancellation_time_completed,
+    id.cancel_job,
+    id.reason_cancellation,
+    id.cancellation_fee
+    
+FROM 
+    invoice i
+INNER JOIN 
+    invoice_details id ON id.id_invoice = i.id
+WHERE
+    i.id_users = :user_id
+    AND i.repeat_state = 1
+    AND (i.duration IS NULL OR i.duration = "")
+    AND id.posting_time = (
+        SELECT MIN(posting_time) 
+        FROM invoice_details 
+        WHERE id_invoice = i.id
+    )
+    AND id.posting_time >= :start_date
+    AND id.posting_time <= :end_date
+    ORDER BY 
+    id.posting_time DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": id,"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'hoa-don-khach-hang': [
+            {
+                "idId": item['idId'],
+                "idI": item['idI'],
+                "id_partner": item['id_partner'],
+                "cancel_repeat": item['cancel_repeat'],
+                "repeat_state": item['repeat_state'],
+                "repeat":item['repeat'],
+                "duration":item['duration'],
+                "removal_date":item['removal_date'],
+                "label":item['label'],
+                "name": item['name_user'],
+                "posting_time": item['posting_time'],
+                "working_day": item['working_day'],
+                "work_time": item['work_time'],
+                "room_area": item['room_area'],
+                "location": item['location'],
+                "location2": item['location2'],
+                "price": item['price'],
+                "payment_methods": item['payment_methods'],
+                "premium_service": item['premium_service'],
+                "pet_note": item['pet_note'],
+                "employee_note": item['employee_note'],
+                "order_status":  item['order_status'],
+                "status": item['order_status'],
+                "cancellation_time_completed": item['cancellation_time_completed'],
+                "cancel_job": item['cancel_job'],
+                "reason_cancellation": item['reason_cancellation'],
+                "cancellation_fee": item['cancellation_fee']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-hoa-don-theo-goi", response_model=Message)
+async def get_hoa_don_theo_goi(id: str, start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+              SELECT 
+    id.id AS idId,
+    i.id AS idI,
+    id.id_partner,
+    i.repeat_state,
+    i.cancel_repeat,
+    i.repeat,
+    i.duration,
+    i.removal_date,
+    i.label,
+    id.name_user,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    id.location, 
+    id.location2,
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note,
+    id.order_status,
+    id.cancellation_time_completed,
+    id.cancel_job,
+    id.reason_cancellation,
+    id.cancellation_fee
+    
+FROM 
+    invoice i
+INNER JOIN 
+    invoice_details id ON id.id_invoice = i.id
+WHERE
+    i.id_users = :user_id
+    AND i.repeat_state = 1
+    AND i.duration IS NOT NULL
+    AND i.duration != ""
+    AND id.posting_time = (
+        SELECT MIN(posting_time) 
+        FROM invoice_details 
+        WHERE id_invoice = i.id
+    )
+    AND id.posting_time >= :start_date
+    AND id.posting_time <= :end_date
+    ORDER BY 
+    id.posting_time DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": id,"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'hoa-don-khach-hang': [
+            {
+                "idId": item['idId'],
+                "idI": item['idI'],
+                "id_partner": item['id_partner'],
+                "cancel_repeat": item['cancel_repeat'],
+                "repeat_state": item['repeat_state'],
+                "repeat":item['repeat'],
+                "duration":item['duration'],
+                "removal_date":item['removal_date'],
+                "label":item['label'],
+                "name": item['name_user'],
+                "posting_time": item['posting_time'],
+                "working_day": item['working_day'],
+                "work_time": item['work_time'],
+                "room_area": item['room_area'],
+                "location": item['location'],
+                "location2": item['location2'],
+                "price": item['price'],
+                "payment_methods": item['payment_methods'],
+                "premium_service": item['premium_service'],
+                "pet_note": item['pet_note'],
+                "employee_note": item['employee_note'],
+                "order_status":  item['order_status'],
+                "status": item['order_status'],
+                "cancellation_time_completed": item['cancellation_time_completed'],
+                "cancel_job": item['cancel_job'],
+                "reason_cancellation": item['reason_cancellation'],
+                "cancellation_fee": item['cancellation_fee']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-danh-gia-user", response_model=Message)
+async def get_danh_gia_user(id: str,start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+        select 
+ e.id,
+ e.id_partner,
+ p.name AS nameP,
+ e.content,
+ e.star,
+ e.date
+from 
+evaluate e 
+INNER JOIN partner p ON e.id_partner = p.id
+where 
+ id_user = :user_id
+ AND
+        e.date >= :start_date
+    AND
+        e.date <= :end_date
+    ORDER BY 
+    e.date DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"user_id": id,"start_date":start_date,"end_date":end_date})
+
+    result_json = {
+        'danh-gia': [
+            {
+                "id": item['id'],
+                "id_partner": item['id_partner'],
+                "nameP": item['nameP'],
+                "content": item['content'],
+                "star": item['star'],
+                "date":item['date']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+
+@app.get("/admin/get-hoa-don-cho-lam-bc", response_model=Message)
+async def get_hoa_don_cho_lam_bc(start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+        SELECT 
+    id.id,
+    id.id_partner,
+    i.label,
+    id.name_user,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    id.location, 
+    id.location2,
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note,
+    id.order_status,
+    id.cancellation_time_completed,
+    id.cancel_job,
+    id.reason_cancellation,
+    id.cancellation_fee
+FROM 
+    invoice i
+INNER JOIN 
+    invoice_details id ON id.id_invoice = i.id
+WHERE
+    id.posting_time >= :start_date
+    AND id.posting_time <= :end_date
+ORDER BY 
+    id.posting_time DESC;
+
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'hoa-don-khach-hang': [
+            {
+                "id": item['id'],
+                "id_partner": item['id_partner'],
+                "label":item['label'],
+                "name": item['name_user'],
+                "posting_time": item['posting_time'],
+                "working_day": item['working_day'],
+                "work_time": item['work_time'],
+                "room_area": item['room_area'],
+                "location": item['location'],
+                "location2": item['location2'],
+                "price": item['price'],
+                "payment_methods": item['payment_methods'],
+                "premium_service": item['premium_service'],
+                "pet_note": item['pet_note'],
+                "employee_note": item['employee_note'],
+                "order_status":  item['order_status'],
+                "status": item['order_status'],
+                "cancellation_time_completed": item['cancellation_time_completed'],
+                "cancel_job": item['cancel_job'],
+                "reason_cancellation": item['reason_cancellation'],
+                "cancellation_fee": item['cancellation_fee']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+
+@app.get("/admin/get-hoa-don-lap-lai-bc", response_model=Message)
+async def get_hoa_don_lap_lai_bc(start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+              SELECT 
+    id.id AS idId,
+    i.id AS idI,
+    id.id_partner,
+    i.repeat_state,
+    i.cancel_repeat,
+    i.repeat,
+    i.duration,
+    i.removal_date,
+    i.label,
+    id.name_user,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    id.location, 
+    id.location2,
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note,
+    id.order_status,
+    id.cancellation_time_completed,
+    id.cancel_job,
+    id.reason_cancellation,
+    id.cancellation_fee
+    
+FROM 
+    invoice i
+INNER JOIN 
+    invoice_details id ON id.id_invoice = i.id
+WHERE
+    i.repeat_state = 1
+    AND (i.duration IS NULL OR i.duration = "")
+    AND id.posting_time = (
+        SELECT MIN(posting_time) 
+        FROM invoice_details 
+        WHERE id_invoice = i.id
+    )
+    AND id.posting_time >= :start_date
+    AND id.posting_time <= :end_date
+    ORDER BY 
+    id.posting_time DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'hoa-don-khach-hang': [
+            {
+                "idId": item['idId'],
+                "idI": item['idI'],
+                "id_partner": item['id_partner'],
+                "cancel_repeat": item['cancel_repeat'],
+                "repeat_state": item['repeat_state'],
+                "repeat":item['repeat'],
+                "duration":item['duration'],
+                "removal_date":item['removal_date'],
+                "label":item['label'],
+                "name": item['name_user'],
+                "posting_time": item['posting_time'],
+                "working_day": item['working_day'],
+                "work_time": item['work_time'],
+                "room_area": item['room_area'],
+                "location": item['location'],
+                "location2": item['location2'],
+                "price": item['price'],
+                "payment_methods": item['payment_methods'],
+                "premium_service": item['premium_service'],
+                "pet_note": item['pet_note'],
+                "employee_note": item['employee_note'],
+                "order_status":  item['order_status'],
+                "status": item['order_status'],
+                "cancellation_time_completed": item['cancellation_time_completed'],
+                "cancel_job": item['cancel_job'],
+                "reason_cancellation": item['reason_cancellation'],
+                "cancellation_fee": item['cancellation_fee']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-hoa-don-theo-goi-tg", response_model=Message)
+async def get_hoa_don_theo_goi_tg(start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+              SELECT 
+    id.id AS idId,
+    i.id AS idI,
+    id.id_partner,
+    i.repeat_state,
+    i.cancel_repeat,
+    i.repeat,
+    i.duration,
+    i.removal_date,
+    i.label,
+    id.name_user,
+    id.posting_time,
+    id.working_day, 
+    id.work_time, 
+    id.room_area,
+    id.location, 
+    id.location2,
+    id.price, 
+    id.payment_methods,
+    id.premium_service,
+    id.pet_note, 
+    id.employee_note,
+    id.order_status,
+    id.cancellation_time_completed,
+    id.cancel_job,
+    id.reason_cancellation,
+    id.cancellation_fee
+    
+FROM 
+    invoice i
+INNER JOIN 
+    invoice_details id ON id.id_invoice = i.id
+WHERE
+    i.repeat_state = 1
+    AND i.duration IS NOT NULL
+    AND i.duration != ""
+    AND id.posting_time = (
+        SELECT MIN(posting_time) 
+        FROM invoice_details 
+        WHERE id_invoice = i.id
+    )
+    AND id.posting_time >= :start_date
+    AND id.posting_time <= :end_date
+    ORDER BY 
+    id.posting_time DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'hoa-don-khach-hang': [
+            {
+                "idId": item['idId'],
+                "idI": item['idI'],
+                "id_partner": item['id_partner'],
+                "cancel_repeat": item['cancel_repeat'],
+                "repeat_state": item['repeat_state'],
+                "repeat":item['repeat'],
+                "duration":item['duration'],
+                "removal_date":item['removal_date'],
+                "label":item['label'],
+                "name": item['name_user'],
+                "posting_time": item['posting_time'],
+                "working_day": item['working_day'],
+                "work_time": item['work_time'],
+                "room_area": item['room_area'],
+                "location": item['location'],
+                "location2": item['location2'],
+                "price": item['price'],
+                "payment_methods": item['payment_methods'],
+                "premium_service": item['premium_service'],
+                "pet_note": item['pet_note'],
+                "employee_note": item['employee_note'],
+                "order_status":  item['order_status'],
+                "status": item['order_status'],
+                "cancellation_time_completed": item['cancellation_time_completed'],
+                "cancel_job": item['cancel_job'],
+                "reason_cancellation": item['reason_cancellation'],
+                "cancellation_fee": item['cancellation_fee']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
+
+@app.get("/admin/get-doanh-thu-bc", response_model=Message)
+async def get_doanh_thu_bc(start_date: str, end_date: str, db: Session = Depends(get_database)):
+    
+    sql_query = """
+       SELECT 
+    id.id,
+    i.id_users,
+    id.name_user,
+    id.id_partner,
+    p.name AS nameP,
+    id.price,
+    id.cancellation_time_completed
+    FROM 
+        partner p
+    INNER JOIN 
+        invoice_details id ON p.id = id.id_partner
+    INNER JOIN 
+        invoice i ON i.id = id.id_invoice
+    WHERE
+        id.order_status = 6
+    AND
+        id.cancellation_time_completed >= :start_date
+    AND
+        id.cancellation_time_completed <= :end_date
+    ORDER BY 
+        id.cancellation_time_completed DESC;
+       """
+
+    # Execute the SQL query
+    filtered_data = await db.fetch_all(sql_query, values={"start_date": start_date, "end_date": end_date})
+
+    result_json = {
+        'doanh-thu': [
+            {
+                "id": item['id'],
+                "id_users": item['id_users'],
+                "name_user": item['name_user'],
+                "id_partner": item['id_partner'],
+                "nameP": item['nameP'],
+                "price": item['price'],
+                "date": item['cancellation_time_completed']
+            }
+            for item in filtered_data
+        ],
+        'status':'OK'
+    }
+
+    return JSONResponse(content=result_json, media_type="application/json; charset=UTF-8")
 #-----------Khách Hàng------------------
 
 # Đăng nhập người dùng
@@ -861,49 +1688,53 @@ async def check_customer_promotions(add_check_promotions: CustomerPromotionsCrea
     return Message(detail=-1)
 
 @app.post("/post-danhgia/", response_model=Message)
-async def post_danhgia(add_danh_gia: CreateDanhGia, current_user: dict = Depends(verify_jwt_token),  db: Session = Depends(get_database)):
+async def post_danhgia(idP: str,idID:str, sao:int, note:str, files: List[UploadFile] = File(...),current_user: dict = Depends(verify_jwt_token),  db: Session = Depends(get_database)):
     user = await get_users(db, current_user["sub"])
-
-    db_danhgia = CreateDanhGia(**add_danh_gia.dict())
-
     id = "EV-" + random_id()
 
-    db_partner = await  get_partner_id(db, db_danhgia.idP)
+    db_partner = await  get_partner_id(db, idP)
 
     current_datetime = datetime.now()
 
-    if(db_danhgia.sao == 1):
+    image_paths = []
+    for file in files:
+        file_path = await FileUploader.upload_file(file)
+        image_paths.append(file_path)
+
+    image_urls = ",".join(image_paths)
+    if(sao == 1):
         motSao = db_partner['one_star'] + 1
-        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(one_star=motSao)
+        update_queryy = update(Partner).where(Partner.id == idP).values(one_star=motSao)
         await db.execute(update_queryy)
-    elif (db_danhgia.sao == 2):
+    elif (sao == 2):
         haiSao = db_partner['two_star'] + 1
-        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(two_star=haiSao)
+        update_queryy = update(Partner).where(Partner.id == idP).values(two_star=haiSao)
         await db.execute(update_queryy)
-    elif (db_danhgia.sao == 3):
+    elif (sao == 3):
         baSao = db_partner['three_star'] + 1
-        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(three_star=baSao)
+        update_queryy = update(Partner).where(Partner.id == idP).values(three_star=baSao)
         await db.execute(update_queryy)
-    elif (db_danhgia.sao == 4):
+    elif (sao == 4):
         bonSao = db_partner['four_star'] + 1
-        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(four_star=bonSao)
+        update_queryy = update(Partner).where(Partner.id == idP).values(four_star=bonSao)
         await db.execute(update_queryy)
-    elif (db_danhgia.sao == 5):
+    elif (sao == 5):
         namSao = db_partner['five_star'] + 1
-        update_queryy = update(Partner).where(Partner.id == db_danhgia.idP).values(five_star=namSao)
+        update_queryy = update(Partner).where(Partner.id == idP).values(five_star=namSao)
         await db.execute(update_queryy)
 
 
     await db.execute(Evaluate.__table__.insert().values(
         id=id,
-        id_partner=db_danhgia.idP,
+        id_partner=idP,
         id_user=user['id'],
-        star=db_danhgia.sao,
-        content=db_danhgia.note,
-        date=current_datetime
+        star=sao,
+        content=note,
+        date=current_datetime,
+        image=image_urls
     ))
 
-    update_queryy = update(InvoiceDetails).where(InvoiceDetails.id == db_danhgia.idID).values(order_status=6)
+    update_queryy = update(InvoiceDetails).where(InvoiceDetails.id == idID).values(order_status=6)
     await db.execute(update_queryy)
     return Message(detail=0)
 
@@ -1077,6 +1908,7 @@ async def select_data_home(current_user: dict = Depends(verify_jwt_token), db: S
         s.name AS namesv,
         s.icon,
         s.label,
+        s.status,
     
         p.id AS idP,
         p.name AS nameP,
@@ -1118,8 +1950,6 @@ async def select_data_home(current_user: dict = Depends(verify_jwt_token), db: S
         customer_promotions cp ON 1=1
     WHERE
         u.id = :id
-    AND
-        (s.status = 1 OR s.id IS NULL)
     AND
         (b.status = 1 OR b.id IS NULL)
     ORDER BY s.label ASC
@@ -1168,7 +1998,8 @@ async def select_data_home(current_user: dict = Depends(verify_jwt_token), db: S
                 'id': item_idS,
                 'name': item['namesv'],
                 'icon': item['icon'],
-                'label': item['label']
+                'label': item['label'],
+                'status': item['status']
             }
             result_json['service'].append(unique_items[item_idS])
 
@@ -1423,6 +2254,7 @@ ORDER BY
 
     return JSONResponse(content={"pending_invoices": result_json, "status": "OK"},
                         media_type="application/json; charset=UTF-8")
+
 @app.get("/get-periodically/", response_model=Message)
 async def get_periodically(current_user: dict = Depends(verify_jwt_token), db: Session = Depends(get_database)):
 
@@ -2187,6 +3019,8 @@ async def put_completee(add_create_partner: CreateWalletU,  db: Session = Depend
         ))
     return {"detail": "OK"}
 
+
+
 #------------------Doi tac -----------------------
 
 #Tao tai khoan doi tac
@@ -2866,7 +3700,6 @@ async def get_statistics(
 
 
     return JSONResponse(content={"statistics":result_json, "status": "OK"}, media_type="application/json; charset=UTF-8")
-
 
 
 @app.websocket("/ws")
