@@ -3,7 +3,7 @@ from email.mime.text import MIMEText
 
 def send_email_temp(receiver_email, contents, title):
 
-    mail = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+    mail = smtplib.SMTP('smtp.gmail.com', 587)
     mail.ehlo()
     mail.starttls()
     email_sent = 'busterdust5@gmail.com'

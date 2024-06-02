@@ -159,6 +159,12 @@ async def get_users(db, email: str):
     user = await db.fetch_one(query)
     return user
 
+
+async def get_all_users(db):
+    query = Users.__table__.select()
+    user = await db.fetch_all(query)
+    return user
+
 async def get_partner(db, email: str):
     query = Partner.__table__.select().where(Partner.email == email)
     user = await db.fetch_one(query)

@@ -32,6 +32,13 @@ class OTP(Base):
     code = Column(String)
     name = Column(String)
 
+class ResetPasswords(Base):
+    __tablename__ = "reset_password"
+
+    id = Column(String, primary_key=True, index=True)
+    id_user = Column(String)
+    token = Column(String)
+
 class Promotion(Base):
     __tablename__ = "promotion"
 
@@ -257,6 +264,7 @@ class Evaluate(Base):
     star = Column(Integer, nullable=False)
     date = Column(String, nullable=False)
     content = Column(String, nullable=False)
+    image = Column(String)
 
 class Location(Base):
     __tablename__ = "location"

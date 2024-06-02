@@ -1,6 +1,7 @@
 
 import os
 from uuid import uuid4
+from fastapi.responses import FileResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.websockets import WebSocketState
 
@@ -18,6 +19,7 @@ from base.base_model import CreateAdmin, CreateLocation, ReferralCode, ForgotPas
     UpdateLoccation, CreatePromotion, UpdatePromotion, CreateSlide, CreateBlog, UpdateBlog, DeleteSlides, UpdateSlide, \
     UpdateBlogStatus, SelectPromotionId, CustomerPromotionsCreate, CreateInvoice, \
     CreatePartner, CreateWallet, CreateWalletU, CreateDanhGia, Messageid
+from upload.file_uploader import FileUploader
 from utils import get_all_admin, get_all_users, get_db_location, generate_referral_code, get_one_admin, get_users, \
     get_select_service_duration, get_select_service, delete_otp_after_delay, random_id, create_jwt_token, \
     verify_jwt_token, get_admin, oauth2_scheme, token_blacklist, get_delete_location, get_select_slides, \
@@ -44,10 +46,11 @@ Base.metadata.create_all(bind=engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 app = FastAPI(root_path="/api/v1")
 UPLOAD_DIR = "assets/images/"
+UPLOAD_DIR_DANH_GIA = "assets/danh_gia/"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-uploader = FileUploader(upload_dir=UPLOAD_DIR)
+uploader_danh_gia = FileUploader(upload_dir=UPLOAD_DIR_DANH_GIA)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Điều chỉnh lại để chỉ cho phép các nguồn cụ thể nếu cần
@@ -1691,17 +1694,15 @@ async def check_customer_promotions(add_check_promotions: CustomerPromotionsCrea
 async def post_danhgia(idP: str,idID:str, sao:int, note:str, files: List[UploadFile] = File(...),current_user: dict = Depends(verify_jwt_token),  db: Session = Depends(get_database)):
     user = await get_users(db, current_user["sub"])
     id = "EV-" + random_id()
-
     db_partner = await  get_partner_id(db, idP)
 
     current_datetime = datetime.now()
 
     image_paths = []
     for file in files:
-        file_path = await FileUploader.upload_file(file)
+        file_path = await uploader_danh_gia.upload_file(file)
         image_paths.append(file_path)
-
-    image_urls = ",".join(image_paths)
+    image_urls = ",".join([image['file_path'] for image in image_paths])
     if(sao == 1):
         motSao = db_partner['one_star'] + 1
         update_queryy = update(Partner).where(Partner.id == idP).values(one_star=motSao)
@@ -1737,6 +1738,16 @@ async def post_danhgia(idP: str,idID:str, sao:int, note:str, files: List[UploadF
     update_queryy = update(InvoiceDetails).where(InvoiceDetails.id == idID).values(order_status=6)
     await db.execute(update_queryy)
     return Message(detail=0)
+@app.get("/get-image/")
+async def get_image(image_path: str):
+    # Kiểm tra xem hình ảnh có tồn tại không
+    full_path = os.path.join(image_path)
+    print(full_path)
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    # Trả về hình ảnh
+    return FileResponse(full_path)
 
 @app.get("/get-customer-promotions/", response_model=Message)
 async def get_customer_promotions(current_user: dict = Depends(verify_jwt_token),  db: Session = Depends(get_database)):
@@ -1885,6 +1896,20 @@ async def update_location(update_lc: UpdateLoccation, db: Session = Depends(get_
 
     update_defaultt_lc = update(Location).where(Location.id == update_lc.id).values(defaultt=1)
     await  db.execute(update_defaultt_lc)
+
+    return {"detail": "OK"}
+
+@app.put("/put-invoice-detail")
+async def put_invoice_detail(id:str,price: int, premiumService: int, workingDay: str, roomArea: str, workTime :str,db: Session = Depends(get_database)):
+
+    update_default_lc = update(InvoiceDetails).where(InvoiceDetails.id == id).values(
+        price=price,
+        premium_service=premiumService,
+        working_day=workingDay,
+        room_area=roomArea,
+        work_time=workTime
+        )
+    await  db.execute(update_default_lc)
 
     return {"detail": "OK"}
 
@@ -2894,7 +2919,8 @@ async def get_partner_information(id: str, db: Session = Depends(get_database)):
         p.five_star AS fiveStarP,
         e.content,
         e.star,
-        e.date
+        e.date,
+        e.image
      from partner p 
      left join evaluate e on p.id= e.id_partner 
      left join users u on e.id_user = u.id
@@ -2904,37 +2930,33 @@ async def get_partner_information(id: str, db: Session = Depends(get_database)):
     # Execute the SQL query
     filtered_data = await db.fetch_all(sql_query, values={"id": id})
 
-    result_json = []
+    partner_info = {
+        "idP": filtered_data[0]['idP'],
+        "nameP": filtered_data[0]['nameP'],
+        "imageP": filtered_data[0]['imageP'],
+        "oneStar": filtered_data[0]['oneStarP'],
+        "twoStar": filtered_data[0]['twoStarP'],
+        "threeStar": filtered_data[0]['threeStarP'],
+        "fourStar": filtered_data[0]['fourStarP'],
+        "fiveStar": filtered_data[0]['fiveStarP'],
+        "user": []
+    }
 
+    # Populate the user reviews
     for item in filtered_data:
-        user_info = []
         if item['idE'] is not None:
-            user_info.append({
+            user_review = {
                 "idE": item['idE'],
                 "nameU": item['nameU'],
                 "imageU": item['imageU'],
                 "star": item['star'],
                 "content": item['content'],
-                "date": item['date']
-            })
+                "date": item['date'],
+                "image": item['image']
+            }
+            partner_info["user"].append(user_review)
 
-        # Check each field to ensure the value is not null before adding to result_json
-        result_item = {
-            "idP": item['idP'],
-            "idE": item['idE'],
-            "nameP": item['nameP'],
-            "imageP": item['imageP'],
-            "oneStar":item['oneStarP'],
-            "twoStar":item['twoStarP'],
-            "threeStar":item['threeStarP'],
-            "fourStar":item['fourStarP'],
-            "fiveStar":item['fiveStarP'],
-            "user": user_info
-        }
-
-        result_json.append(result_item)
-
-    return (JSONResponse(content={"partner_information": result_json, "status": "OK"},
+    return (JSONResponse(content={"partner_information": partner_info, "status": "OK"},
                          media_type="application/json; charset=UTF-8"))
 
 @app.put("/put-cancel-job/")
